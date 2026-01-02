@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  globalstocknow-job:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,9 +20,10 @@ jobs:
 
       - name: 속보 수집 실행
         run: |
-          echo "🚀 [$(date +'%Y-%m-%d %H:%M UTC')] 속보 수집 시작"
+          echo "🚀 속보 수집 시작 ($(date +'%Y-%m-%d %H:%M UTC'))"
           pip install feedparser fuzzywuzzy python-levenshtein
           python collector.py
+          echo "✅ 속보 수집 완료"
 
       - name: 속보 결과 저장
         uses: actions/upload-artifact@v4
@@ -31,11 +33,12 @@ jobs:
 
       - name: AI 분석 실행 (Qwen2.5-1.5B)
         run: |
-          echo "🧠 [$(date +'%Y-%m-%d %H:%M UTC')] AI 분석 시작 - 패키지 설치"
+          echo "🧠 AI 분석 시작 - 패키지 설치"
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate bitsandbytes sentencepiece
-          echo "✅ 패키지 설치 완료 - 분석 실행"
+          echo "✅ 패키지 설치 완료 - 모델 로딩"
           python analyzer.py
+          echo "🎯 AI 분석 완료"
 
       - name: AI 분석 결과 저장
         uses: actions/upload-artifact@v4
@@ -45,5 +48,5 @@ jobs:
 
       - name: 완료 알림
         run: |
-          echo "🌟 GlobalStockNow 파이프라인 성공! ($(date +'%Y-%m-%d %H:%M UTC'))"
-          echo "속보 수집 + AI 분석 완료"
+          echo "🌟 GlobalStockNow 파이프라인 전체 성공!"
+          echo "다음 자동 실행: 4시간 후"
