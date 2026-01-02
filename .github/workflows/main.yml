@@ -40,7 +40,7 @@ jobs:
           name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
 
-           - name: AI 분석 실행 (Qwen2.5 Analyzer v0.1)
+      - name: AI 분석 실행 (Qwen2.5 Analyzer v0.1)
         run: |
           echo "🧠 GlobalStockNow AI 분석 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
           echo "📦 필수 LLM 패키지 설치 중... (torch, transformers, bitsandbytes 등)"
