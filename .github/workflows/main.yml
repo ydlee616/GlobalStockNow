@@ -1,11 +1,36 @@
-name: Test Workflow
+name: GlobalStockNow Collector
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *'  # 매 4시간 자동 실행 (한국시간 1시, 5시, 9시, 13시, 17시, 21시)
 
 jobs:
-  test-job:
+  collect-news:
     runs-on: ubuntu-latest
     steps:
-      - name: Simple Echo
-        run: echo "This is a test! Workflow is working."
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 속보 수집 실행
+        run: |
+          echo "🚀 GlobalStockNow 속보 수집 시작 ($(date +'%Y-%m-%d %H:%M UTC'))"
+          pip install feedparser fuzzywuzzy python-levenshtein
+          python collector.py
+          echo "✅ 속보 수집 완료! breaking_news.json 생성됨"
+
+      - name: 속보 결과 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: breaking-news-${{ github.run_number }}
+          path: breaking_news.json
+
+      - name: 완료 알림
+        run: |
+          echo "🌟 Collector 성공! 속보 수집 완료"
+          echo "다음 단계: AI 분석 연결 예정"
