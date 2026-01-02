@@ -26,13 +26,14 @@ jobs:
           echo "현재 시간 (UTC): $(date)"
           echo "이 로그는 GitHub Actions에서 매 4시간마다 자동으로 남습니다!"
           echo "다음 단계: 속보 수집 모듈 연결 예정 📈"
-      - name: 속보 수집 실행
+            - name: 속보 수집 실행 (Collector v0.1)
         run: |
+          echo "📡 GlobalStockNow 속보 수집 시작! ($(date))"
           pip install feedparser fuzzywuzzy python-levenshtein
           python collector.py
-          
-      - name: 결과 JSON 업로드 (아티팩트)
+
+      - name: 수집 결과 저장 (Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: breaking-news-${{ github.run_id }}
+          name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
