@@ -39,3 +39,16 @@ jobs:
         with:
           name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
+
+      - name: AI 분석 실행 (Qwen2.5 Analyzer v0.1)
+        run: |
+          echo "🧠 AI 분석 모듈 시작! ($(date))"
+          pip install torch transformers accelerate bitsandbytes
+          python analyzer.py
+          echo "🎯 AI 분석 완료!"
+
+      - name: AI 분석 결과 저장 (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyzed-news-${{ github.run_number }}
+          path: analyzed_news.json
