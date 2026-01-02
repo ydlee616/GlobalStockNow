@@ -2,9 +2,8 @@ name: GlobalStockNow Scheduler Test
 
 on:
   schedule:
-    # 매 4시간마다 실행 (0분에 정확히: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
-    - cron: '0 */4 * * *'
-  workflow_dispatch:  # 수동으로도 실행 가능하게 (테스트용)
+    - cron: '0 */4 * * *'  # 매 4시간마다 실행
+  workflow_dispatch:       # 수동 실행 가능
 
 jobs:
   hello-test:
@@ -16,7 +15,7 @@ jobs:
       - name: Say Hello GlobalStockNow!
         run: echo "🚀 GlobalStockNow 자동화 시스템이 정상 작동 중입니다! $(date)"
 
-      - name: Python 환경 설정 (미래 대비)
+      - name: Python 환경 설정
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -25,14 +24,17 @@ jobs:
         run: |
           echo "현재 시간 (UTC): $(date)"
           echo "이 로그는 GitHub Actions에서 매 4시간마다 자동으로 남습니다!"
-          echo "다음 단계: 속보 수집 모듈 연결 예정 📈"
-            - name: 속보 수집 실행 (Collector v0.1)
+          echo "다음 단계: 속보 수집 모듈 실행 📈"
+
+      - name: 속보 수집 실행 (Collector v0.1)
         run: |
-          echo "📡 GlobalStockNow 속보 수집 시작! ($(date))"
+          echo "📡 GlobalStockNow 속보 수집 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
           pip install feedparser fuzzywuzzy python-levenshtein
           python collector.py
+          echo "✅ collector.py 실행 완료!"
 
       - name: 수집 결과 저장 (Artifact)
+        if: success()  # 이전 스텝 성공시에만 실행
         uses: actions/upload-artifact@v4
         with:
           name: breaking-news-${{ github.run_number }}
