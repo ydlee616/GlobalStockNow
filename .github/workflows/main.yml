@@ -3,10 +3,10 @@ name: GlobalStockNow Collector
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */4 * * *'  # 매 4시간 자동 실행 (한국시간 1시, 5시, 9시, 13시, 17시, 21시)
+    - cron: '0 */4 * * *'  # 매 4시간 자동 실행
 
 jobs:
-  collect-news:
+  collector-job:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -32,5 +32,4 @@ jobs:
 
       - name: 완료 알림
         run: |
-          echo "🌟 Collector 성공! 속보 수집 완료"
-          echo "다음 단계: AI 분석 연결 예정"
+          echo "🌟 속보 수집 성공! Artifact에서 JSON 다운로드 가능"
