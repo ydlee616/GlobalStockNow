@@ -8,6 +8,7 @@ on:
 jobs:
   collector-job:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,4 +33,4 @@ jobs:
 
       - name: 완료 알림
         run: |
-          echo "🌟 속보 수집 성공! Artifact에서 JSON 다운로드 가능"
+          echo "🌟 속보 수집 성공! Artifact에서 JSON 확인하세요"
