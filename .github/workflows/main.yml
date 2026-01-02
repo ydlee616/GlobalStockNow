@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,4 +48,3 @@ jobs:
       - name: 완료 알림
         run: |
           echo "🌟 GlobalStockNow 파이프라인 전체 성공!"
-          echo "다음 자동 실행: 4시간 후"
