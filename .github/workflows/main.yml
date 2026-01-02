@@ -1,50 +1,11 @@
-name: GlobalStockNow Pipeline
+name: Test Workflow
 
 on:
-  schedule:
-    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
-  build:
+  test-job:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: 속보 수집 실행
-        run: |
-          echo "🚀 속보 수집 시작 ($(date +'%Y-%m-%d %H:%M UTC'))"
-          pip install feedparser fuzzywuzzy python-levenshtein
-          python collector.py
-          echo "✅ 속보 수집 완료"
-
-      - name: 속보 결과 저장
-        uses: actions/upload-artifact@v4
-        with:
-          name: breaking-news-${{ github.run_number }}
-          path: breaking_news.json
-
-      - name: AI 분석 실행 (Qwen2.5-1.5B)
-        run: |
-          echo "🧠 AI 분석 시작 - 패키지 설치"
-          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install transformers accelerate bitsandbytes sentencepiece
-          echo "✅ 패키지 설치 완료 - 모델 로딩"
-          python analyzer.py
-          echo "🎯 AI 분석 완료"
-
-      - name: AI 분석 결과 저장
-        uses: actions/upload-artifact@v4
-        with:
-          name: analyzed-news-${{ github.run_number }}
-          path: analyzed_news.json
-
-      - name: 완료 알림
-        run: |
-          echo "🌟 GlobalStockNow 파이프라인 전체 성공!"
+      - name: Simple Echo
+        run: echo "This is a test! Workflow is working."
