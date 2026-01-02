@@ -1,0 +1,28 @@
+name: GlobalStockNow Scheduler Test
+
+on:
+  schedule:
+    # 매 4시간마다 실행 (0분에 정확히: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+    - cron: '0 */4 * * *'
+  workflow_dispatch:  # 수동으로도 실행 가능하게 (테스트용)
+
+jobs:
+  hello-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Say Hello GlobalStockNow!
+        run: echo "🚀 GlobalStockNow 자동화 시스템이 정상 작동 중입니다! $(date)"
+
+      - name: Python 환경 설정 (미래 대비)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 테스트 로그 출력
+        run: |
+          echo "현재 시간 (UTC): $(date)"
+          echo "이 로그는 GitHub Actions에서 매 4시간마다 자동으로 남습니다!"
+          echo "다음 단계: 속보 수집 모듈 연결 예정 📈"
