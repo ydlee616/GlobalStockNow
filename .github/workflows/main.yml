@@ -1,4 +1,4 @@
-name: GlobalStockNow Collector
+name: GlobalStockNow Full Pipeline
 
 on:
   workflow_dispatch:
@@ -6,9 +6,8 @@ on:
     - cron: '0 */4 * * *'
 
 jobs:
-  collector-job:
+  pipeline:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,10 +19,8 @@ jobs:
 
       - name: 속보 수집 실행
         run: |
-          echo "🚀 GlobalStockNow 속보 수집 시작 ($(date +'%Y-%m-%d %H:%M UTC'))"
-          pip install feedparser fuzzywuzzy python-levenshtein
+          pip install feedparser
           python collector.py
-          echo "✅ 속보 수집 완료! breaking_news.json 생성됨"
 
       - name: 속보 결과 저장
         uses: actions/upload-artifact@v4
@@ -31,6 +28,14 @@ jobs:
           name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
 
-      - name: 완료 알림
+      - name: AI 분석 실행 (Qwen2.5-1.5B)
         run: |
-          echo "🌟 속보 수집 성공! Artifact에서 JSON 확인하세요"
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers accelerate bitsandbytes sentencepiece
+          python analyzer.py
+
+      - name: AI 분석 결과 저장
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyzed-news-${{ github.run_number }}
+          path: analyzed_news.json
