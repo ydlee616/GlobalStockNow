@@ -40,13 +40,13 @@ jobs:
           name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
 
-      - name: AI 분석 실행 (Qwen2.5 Analyzer v0.1)
+            - name: AI 분석 실행 (Qwen2.5-1.5B Analyzer)
         run: |
           echo "🧠 GlobalStockNow AI 분석 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
-          echo "📦 필수 LLM 패키지 설치 중... (torch, transformers, bitsandbytes 등)"
+          echo "📦 필수 패키지 설치 (CPU 환경 최적화)"
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate bitsandbytes sentencepiece
-          echo "✅ 패키지 설치 완료!"
+          echo "✅ 설치 완료! 모델 로딩 시작 (Qwen2.5-1.5B)"
           python analyzer.py
           echo "🎯 AI 분석 완료! analyzed_news.json 생성됨"
 
