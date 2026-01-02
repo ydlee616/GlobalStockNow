@@ -1,90 +1,99 @@
 #!/usr/bin/env python3
-# GlobalStockNow News Collector v0.1 (2026.1.2)
-# Google News RSS + 키워드 필터링 (반도체, Fed, Tesla 등 30개 키워드)
+# GlobalStockNow AI Analyzer v0.1 (2026.1.2)
+# Qwen2.5-7B로 해외 속보 → 한국 시장 영향 분석
 
-import feedparser
-from datetime import datetime, timedelta
 import json
-import re
-from fuzzywuzzy import fuzz  # 중복 제거용 (pip 필요 없음, GitHub Actions에 있음)
+from datetime import datetime
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
 
-# PDF 페이지 8 기반: 30+ 주식 키워드 리스트 (최초 버전)
-STOCK_KEYWORDS = [
-    'semiconductor', 'chip', 'nvidia', 'amd', 'intel', 'tsmc', 'samsung', 'skhynix',
-    'fed', 'federal reserve', 'interest rate', 'powell',
-    'tesla', 'ev', 'battery', 'byd', 'catl',
-    'apple', 'iphone', 'aapl', 'googl', 'msft', 'amzn', 'meta',
-    'oil', 'opec', 'energy', 'exxon',
-    'china', 'trade war', 'tariff', 'hkex', 'hsi',
-    'bitcoin', 'crypto', 'eth', 'sec',
-    'inflation', 'cpi', 'gdp', 'recession'
-]
+# 분석 결과 저장 리스트
+analyzed_news = []
 
-def collect_breaking_news(max_hours=6, max_items=20):
-    """Google News RSS로 최근 4~6시간 속보 수집 + 키워드 필터"""
-    print("🚀 GlobalStockNow 속보 수집 시작 (최근 {}시간, 최대 {}개)".format(max_hours, max_items))
-    
-    # Google News RSS (US + Business + Tech, 무료/무제한)
-    rss_feeds = [
-        'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=h',  # Headlines
-        'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&cat=Bus',  # Business
-        'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&cat=Tec'   # Technology
-    ]
-    
-    all_news = []
-    seen_titles = set()  # 중복 제거
-    
-    cutoff_time = datetime.utcnow() - timedelta(hours=max_hours)
-    
-    for feed_url in rss_feeds:
-        feed = feedparser.parse(feed_url)
-        print(f"📡 {feed_url} 수집: {len(feed.entries)}개 원본 기사")
-        
-        for entry in feed.entries[:10]:  # 피드당 상위 10개만
-            pub_date = entry.get('published_parsed') or entry.get('updated_parsed')
-            if not pub_date:
-                continue
-                
-            pub_dt = datetime(*pub_date[:6])
-            if pub_dt < cutoff_time:
-                continue  # 6시간 이내 기사만
-            
-            title = entry.title.lower()
-            link = entry.link
-            summary = (entry.get('summary') or '').lower()
-            
-            # 키워드 매칭 (제목+요약 70% 이상 일치)
-            content = title + ' ' + summary
-            matched_keywords = [kw for kw in STOCK_KEYWORDS if kw in content]
-            
-            if matched_keywords and fuzz.ratio(title, list(seen_titles)[-1] if seen_titles else '') < 80:
-                news_item = {
-                    'title': entry.title,
-                    'link': link,
-                    'published': pub_dt.strftime('%Y-%m-%d %H:%M UTC'),
-                    'keywords': matched_keywords[:3],  # 상위 3개만
-                    'summary': entry.get('summary', '')[:200] + '...'
-                }
-                all_news.append(news_item)
-                seen_titles.add(title)
-    
-    # 영향도 높은 순 정렬 (키워드 수 기준, 나중 AI 분석으로 대체)
-    all_news.sort(key=lambda x: len(x['keywords']), reverse=True)
-    final_news = all_news[:max_items]
-    
-    print(f"✅ 최종 필터링: {len(final_news)}개 속보 수집 완료!")
-    return final_news
+# 프롬프트 템플릿 (사업계획서 기반)
+PROMPT_TEMPLATE = """
+너는 한국 주식 전문가이자 글로벌 경제 분석가다.
+아래 해외 속보를 분석해서 한국 시장에 미치는 영향을 10점 만점으로 평가해줘.
 
-if __name__ == "__main__":
-    news = collect_breaking_news(max_hours=6, max_items=20)
-    print("\n📊 수집된 해외 주식 속보 TOP 5 (한국 시장 영향 예상):")
-    for i, item in enumerate(news[:5], 1):
-        print(f"{i}. [{item['published']}] {item['title']}")
-        print(f"   🔗 {item['link']}")
-        print(f"   🏷️  키워드: {', '.join(item['keywords'])}")
-        print()
+뉴스 제목: {title}
+뉴스 요약: {summary}
+발행 시간: {published}
+
+다음 JSON 형식으로만 답변해 (설명 없이 JSON만 출력):
+{{
+  "impact_score": 0~10 (숫자만, 한국 시장 영향도. 7점 미만은 분석 제외),
+  "impact_period": "단기(1~3일)" 또는 "중기(1~4주)" 또는 "장기(1개월 이상)",
+  "related_korean_stocks": ["종목명1", "종목명2", ...] (최대 3개),
+  "key_points": "한국 투자자에게 중요한 시사점 한 문장 (30자 이내)"
+}}
+
+분석 시작:
+"""
+
+print("🧠 GlobalStockNow AI 분석 시작! Qwen2.5-7B 로딩 중...")
+
+# Qwen2.5-7B 4bit quantization (GitHub Actions GPU 지원 없음 → CPU 모드, 첫 실행 2~3분 소요)
+model_name = "Qwen/Qwen2.5-7B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto",
+    load_in_4bit=True  # 메모리 절약
+)
+
+print("✅ 모델 로딩 완료! 분석 시작")
+
+# breaking_news.json 읽기
+try:
+    with open('breaking_news.json', 'r', encoding='utf-8') as f:
+        news_list = json.load(f)
+    print(f"📥 {len(news_list)}개 속보 로드 완료")
+except:
+    print("❌ breaking_news.json 파일 없음. collector 먼저 실행 필요")
+    exit()
+
+# 하나씩 분석
+for idx, item in enumerate(news_list, 1):
+    print(f"\n[{idx}/{len(news_list)}] 분석 중: {item['title'][:60]}...")
     
-    # JSON 저장 (다음 AI 분석 모듈용)
-    with open('breaking_news.json', 'w') as f:
-        json.dump(news, f, indent=2, ensure_ascii=False)
-    print("💾 breaking_news.json 저장 완료 (AI 분석 준비)")
+    prompt = PROMPT_TEMPLATE.format(
+        title=item['title'],
+        summary=item.get('summary', '요약 없음'),
+        published=item['published']
+    )
+    
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=200,
+            temperature=0.3,
+            do_sample=False
+        )
+    
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response = response[len(prompt):].strip()  # 프롬프트 제거
+    
+    try:
+        result = json.loads(response)
+        if result.get("impact_score", 0) >= 7:
+            result["original_title"] = item["title"]
+            result["original_link"] = item["link"]
+            result["analyzed_at"] = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+            analyzed_news.append(result)
+            print(f"   ✅ 영향도 {result['impact_score']}점 → 분석 저장")
+        else:
+            print(f"   ⏩ 영향도 {result.get('impact_score', 0)}점 → 스킵")
+    except:
+        print("   ❌ JSON 파싱 실패 → 스킵")
+
+# 결과 저장
+final_count = len(analyzed_news)
+print(f"\n🎯 최종 분석 완료: {final_count}개 고영향 속보 선별!")
+
+with open('analyzed_news.json', 'w', encoding='utf-8') as f:
+    json.dump(analyzed_news, f, indent=2, ensure_ascii=False)
+
+print("💾 analyzed_news.json 저장 완료 → 콘텐츠 생성 준비 OK!")
