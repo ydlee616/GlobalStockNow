@@ -2,53 +2,42 @@ name: GlobalStockNow Scheduler Test
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # 매 4시간마다 실행
-  workflow_dispatch:       # 수동 실행 가능
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
 
 jobs:
-  hello-test:
+  pipeline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Say Hello GlobalStockNow!
-        run: echo "🚀 GlobalStockNow 자동화 시스템이 정상 작동 중입니다! $(date)"
 
       - name: Python 환경 설정
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: 테스트 로그 출력
-        run: |
-          echo "현재 시간 (UTC): $(date)"
-          echo "이 로그는 GitHub Actions에서 매 4시간마다 자동으로 남습니다!"
-          echo "다음 단계: 속보 수집 모듈 실행 📈"
-
       - name: 속보 수집 실행 (Collector v0.1)
         run: |
-          echo "📡 GlobalStockNow 속보 수집 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
+          echo "🚀 GlobalStockNow 속보 수집 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
           pip install feedparser fuzzywuzzy python-levenshtein
           python collector.py
-          echo "✅ collector.py 실행 완료!"
+          echo "✅ 속보 수집 완료!"
 
       - name: 수집 결과 저장 (Artifact)
-        if: success()  # 이전 스텝 성공시에만 실행
         uses: actions/upload-artifact@v4
         with:
           name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
 
-            - name: AI 분석 실행 (Qwen2.5-1.5B Analyzer)
+      - name: AI 분석 실행 (Qwen2.5-1.5B)
         run: |
-          echo "🧠 GlobalStockNow AI 분석 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
-          echo "📦 필수 패키지 설치 (CPU 환경 최적화)"
+          echo "🧠 AI 분석 시작! LLM 패키지 설치 중..."
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate bitsandbytes sentencepiece
-          echo "✅ 설치 완료! 모델 로딩 시작 (Qwen2.5-1.5B)"
+          echo "✅ 패키지 설치 완료! 모델 로딩 시작"
           python analyzer.py
-          echo "🎯 AI 분석 완료! analyzed_news.json 생성됨"
+          echo "🎯 AI 분석 완료!"
 
       - name: AI 분석 결과 저장 (Artifact)
         if: success()
@@ -56,3 +45,8 @@ jobs:
         with:
           name: analyzed-news-${{ github.run_number }}
           path: analyzed_news.json
+
+      - name: 테스트 로그 (완료 확인)
+        run: |
+          echo "🌟 GlobalStockNow 파이프라인 전체 성공!"
+          echo "다음 자동 실행: 한국시간 약 4시간 후"
