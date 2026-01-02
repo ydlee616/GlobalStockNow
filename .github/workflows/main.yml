@@ -1,4 +1,4 @@
-name: GlobalStockNow Scheduler Test
+name: GlobalStockNow Pipeline
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  pipeline:
+  run-pipeline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -17,14 +17,14 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: 속보 수집 실행 (Collector v0.1)
+      - name: 속보 수집 실행
         run: |
-          echo "🚀 GlobalStockNow 속보 수집 시작! ($(date +'%Y-%m-%d %H:%M UTC'))"
+          echo "🚀 속보 수집 시작 ($(date +'%Y-%m-%d %H:%M UTC'))"
           pip install feedparser fuzzywuzzy python-levenshtein
           python collector.py
-          echo "✅ 속보 수집 완료!"
+          echo "✅ 속보 수집 완료! breaking_news.json 생성"
 
-      - name: 수집 결과 저장 (Artifact)
+      - name: 수집 결과 저장
         uses: actions/upload-artifact@v4
         with:
           name: breaking-news-${{ github.run_number }}
@@ -32,21 +32,20 @@ jobs:
 
       - name: AI 분석 실행 (Qwen2.5-1.5B)
         run: |
-          echo "🧠 AI 분석 시작! LLM 패키지 설치 중..."
+          echo "🧠 AI 분석 시작! 필수 패키지 설치 중..."
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate bitsandbytes sentencepiece
-          echo "✅ 패키지 설치 완료! 모델 로딩 시작"
+          echo "✅ 패키지 설치 완료! Qwen2.5-1.5B 모델 로딩 시작"
           python analyzer.py
-          echo "🎯 AI 분석 완료!"
 
-      - name: AI 분석 결과 저장 (Artifact)
-        if: success()
+      - name: AI 분석 결과 저장
         uses: actions/upload-artifact@v4
         with:
           name: analyzed-news-${{ github.run_number }}
           path: analyzed_news.json
 
-      - name: 테스트 로그 (완료 확인)
+      - name: 파이프라인 완료 알림
         run: |
-          echo "🌟 GlobalStockNow 파이프라인 전체 성공!"
-          echo "다음 자동 실행: 한국시간 약 4시간 후"
+          echo "🌟 GlobalStockNow 전체 파이프라인 성공!"
+          echo "속보 수집 → AI 분석 → 결과 저장 완료"
+          echo "다음 자동 실행: 4시간 후"
