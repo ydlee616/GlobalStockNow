@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-# GlobalStockNow News Collector v0.5 - 필터 완화 + 안정화 (2026.1.3)
+# GlobalStockNow News Collector v0.6 - 완전 안정화 버전 (2026.1.3)
 
 import feedparser
 import json
 from datetime import datetime, timedelta
-import re
 
-# 완화된 키워드 (주식/경제 관련 주요 단어)
+# 주식 관련 키워드 (완화된 버전)
 KEYWORDS = [
     'nvidia', 'amd', 'intel', 'tsmc', 'samsung', 'sk hynix', 'semiconductor', 'chip',
     'fed', 'federal reserve', 'interest rate', 'powell', 'fomc',
-    'tesla', 'ev', 'battery', 'cybertruck',
-    'apple', 'iphone', 'microsoft', 'amazon', 'meta', 'google',
+    'tesla', 'ev', 'cybertruck', 'model',
+    'apple', 'iphone', 'microsoft', 'amazon', 'meta', 'google', 'alphabet',
     'oil', 'opec', 'brent', 'wti',
     'bitcoin', 'btc', 'crypto', 'ethereum',
-    'trade war', 'tariff', 'china', 'hong kong stock'
+    'trade', 'tariff', 'china', 'hong kong'
 ]
 
 def is_relevant(title, summary=""):
@@ -24,35 +23,36 @@ def is_relevant(title, summary=""):
             return True
     return False
 
-def collect_news(max_items=15, hours=8):
-    print("GlobalStockNow 속보 수집 시작 (필터 완화 버전)")
+def collect_news():
+    print("GlobalStockNow 속보 수집 시작 - 필터 완화 버전")
 
     feeds = [
-        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",  # Google News Top
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",  # Top News
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Business
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Technology
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en"   # World
     ]
 
     news_list = []
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.utcnow() - timedelta(hours=12)  # 최근 12시간
 
     for url in feeds:
-        try:
-            feed = feedparser.parse(url)
-            print(f"{url} → {len(feed.entries)}개 항목 확인")
-        except Exception as e:
-            print(f"피드 로딩 실패: {e}")
+        feed = feedparser.parse(url)
+        if feed.bozo:
+            print(f"피드 파싱 오류: {url}")
             continue
 
-        for entry in feed.entries:
-            pub_parsed = entry.get('published_parsed')
-            if pub_parsed:
-                pub_time = datetime(*pub_parsed[:6])
-            else:
-                continue
+        print(f"{url} → {len(feed.entries)}개 항목 확인")
 
-            if pub_time < cutoff:
+        for entry in feed.entries:
+            if len(news_list) >= 30:
+                break
+
+            pub_time = entry.get('published_parsed')
+            if not pub_time:
+                continue
+            pub_dt = datetime(*pub_time[:6])
+            if pub_dt < cutoff:
                 continue
 
             title = entry.title
@@ -62,27 +62,24 @@ def collect_news(max_items=15, hours=8):
                 news_list.append({
                     "title": title,
                     "link": entry.link,
-                    "published": pub_time.strftime("%Y-%m-%d %H:%M UTC"),
+                    "published": pub_dt.strftime("%Y-%m-%d %H:%M UTC"),
                     "summary": summary[:300]
                 })
 
-            if len(news_list) >= max_items * 2:
-                break
-
     # 중복 제거
-    seen = set()
-    unique = []
+    seen_titles = set()
+    unique_news = []
     for item in news_list:
-        if item['title'] not in seen:
-            seen.add(item['title'])
-            unique.append(item)
+        if item['title'] not in seen_titles:
+            seen_titles.add(item['title'])
+            unique_news.append(item)
 
-    final = unique[:max_items]
+    final_news = unique_news[:15]  # 최대 15개
 
-    print(f"최종 {len(final)}개 속보 수집 완료")
+    print(f"최종 {len(final_news)}개 속보 수집 완료")
 
     with open('breaking_news.json', 'w', encoding='utf-8') as f:
-        json.dump(final, f, indent=2, ensure_ascii=False)
+        json.dump(final_news, f, indent=2, ensure_ascii=False)
 
     print("breaking_news.json 저장 완료")
 
