@@ -1,85 +1,81 @@
 #!/usr/bin/env python3
-# GlobalStockNow News Collector v0.6 - 완전 안정화 버전 (2026.1.3)
+# GlobalStockNow News Collector v0.7 - 필터 강화 버전 (2026.1.3)
 
 import feedparser
 import json
 from datetime import datetime, timedelta
+import re
 
-# 주식 관련 키워드 (완화된 버전)
+# 정제된 키워드 (주식/경제 특정 용어 위주)
 KEYWORDS = [
-    'nvidia', 'amd', 'intel', 'tsmc', 'samsung', 'sk hynix', 'semiconductor', 'chip',
-    'fed', 'federal reserve', 'interest rate', 'powell', 'fomc',
-    'tesla', 'ev', 'cybertruck', 'model',
-    'apple', 'iphone', 'microsoft', 'amazon', 'meta', 'google', 'alphabet',
-    'oil', 'opec', 'brent', 'wti',
-    'bitcoin', 'btc', 'crypto', 'ethereum',
-    'trade', 'tariff', 'china', 'hong kong'
+    'nvidia', 'amd', 'intel', 'tsmc', 'samsung electronics', 'sk hynix', 'semiconductor', 'chip shortage',
+    'fed', 'federal reserve', 'interest rate', 'powell', 'fomc', 'rate cut',
+    'tesla', 'ev sales', 'cybertruck',
+    'apple', 'iphone', 'aapl', 'microsoft', 'msft', 'amazon', 'amzn', 'meta',
+    'oil price', 'opec', 'brent', 'wti',
+    'bitcoin price', 'btc', 'crypto market', 'ethereum',
+    'trade war', 'tariff', 'china economy'
 ]
 
-def is_relevant(title, summary=""):
-    content = (title + " " + summary).lower()
+def is_relevant(content):
+    content_lower = content.lower()
     for kw in KEYWORDS:
-        if kw.lower() in content:
+        if re.search(r'\b' + re.escape(kw.lower()) + r'\b', content_lower):
             return True
     return False
 
 def collect_news():
-    print("GlobalStockNow 속보 수집 시작 - 필터 완화 버전")
+    print("속보 수집 시작 - 강화 버전")
 
     feeds = [
-        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",  # Top News
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Business
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Technology
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en"   # World
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en"   # Technology
     ]
 
     news_list = []
-    cutoff = datetime.utcnow() - timedelta(hours=12)  # 최근 12시간
+    cutoff = datetime.utcnow() - timedelta(hours=12)
 
     for url in feeds:
         feed = feedparser.parse(url)
-        if feed.bozo:
-            print(f"피드 파싱 오류: {url}")
-            continue
-
-        print(f"{url} → {len(feed.entries)}개 항목 확인")
+        print(f"{url} → {len(feed.entries)}개 항목")
 
         for entry in feed.entries:
-            if len(news_list) >= 30:
-                break
-
-            pub_time = entry.get('published_parsed')
-            if not pub_time:
+            pub_parsed = entry.get('published_parsed')
+            if pub_parsed:
+                pub_time = datetime(*pub_parsed[:6])
+            else:
                 continue
-            pub_dt = datetime(*pub_time[:6])
-            if pub_dt < cutoff:
+
+            if pub_time < cutoff:
                 continue
 
             title = entry.title
             summary = entry.get('summary', '') or ''
+            content = title + " " + summary
 
-            if is_relevant(title, summary):
+            if is_relevant(content):
                 news_list.append({
                     "title": title,
                     "link": entry.link,
-                    "published": pub_dt.strftime("%Y-%m-%d %H:%M UTC"),
+                    "published": pub_time.strftime("%Y-%m-%d %H:%M UTC"),
                     "summary": summary[:300]
                 })
 
+            if len(news_list) >= 20:
+                break
+
     # 중복 제거
-    seen_titles = set()
-    unique_news = []
+    seen = set()
+    unique = []
     for item in news_list:
-        if item['title'] not in seen_titles:
-            seen_titles.add(item['title'])
-            unique_news.append(item)
+        if item['title'] not in seen:
+            seen.add(item['title'])
+            unique.append(item)
 
-    final_news = unique_news[:15]  # 최대 15개
-
-    print(f"최종 {len(final_news)}개 속보 수집 완료")
+    print(f"최종 {len(unique)}개 속보 수집")
 
     with open('breaking_news.json', 'w', encoding='utf-8') as f:
-        json.dump(final_news, f, indent=2, ensure_ascii=False)
+        json.dump(unique, f, indent=2, ensure_ascii=False)
 
     print("breaking_news.json 저장 완료")
 
