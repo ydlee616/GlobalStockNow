@@ -1,44 +1,42 @@
 #!/usr/bin/env python3
-# GlobalStockNow News Collector v0.8 - 균형 필터 버전 (2026.1.6)
+# GlobalStockNow Collector v1.1 - 영문 키워드 + 신기술/신상품 강화 (2026.1.6)
 
 import feedparser
 import json
 from datetime import datetime, timedelta
-import re
 
-# 균형 잡힌 키워드 (정확 매칭 + 일부 일반 단어 허용)
+# 모든 키워드 영문화 (신기술/신상품 중심)
 KEYWORDS = [
-    'nvidia', 'amd', 'intel', 'tsmc', 'samsung', 'sk hynix', 'semiconductor', 'chip',
-    'fed', 'federal reserve', 'interest rate', 'powell', 'fomc',
-    'tesla', 'ev', 'cybertruck', 'model',
-    'apple', 'iphone', 'microsoft', 'amazon', 'meta', 'google',
-    'oil', 'opec', 'brent', 'wti',
-    'bitcoin', 'btc', 'crypto', 'ethereum',
-    'trade war', 'tariff', 'china'
+    'nvidia', 'tesla', 'fed', 'oil', 'bitcoin', 'semiconductor', 'ev', 'apple', 'microsoft', 'amazon',
+    'samsung', 'sk hynix', 'interest rate', 'crypto', 'tariff', 'china',
+    'new product', 'launch', 'ces', 'ai', 'quantum', 'new chip', 'new phone', 'new car', 'new battery',
+    'new technology', 'breakthrough', 'innovation', 'unveiled', 'announced', 'released'
 ]
 
 def is_relevant(content):
     content_lower = content.lower()
-    for kw in KEYWORDS:
-        if kw.lower() in content_lower:  # 간단한 포함 매칭 (오매칭 최소화)
-            return True
-    return False
+    return any(kw.lower() in content_lower for kw in KEYWORDS)
 
 def collect_news():
-    print("속보 수집 시작 - 균형 버전")
+    print("속보 수집 시작 - 영문 키워드 + 신기술 강화 버전")
 
     feeds = [
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Business
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Technology
-        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"  # Top News 추가 (보완)
+        # Business
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+        # Technology (신기술/신상품 핵심)
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+        # Science (신기술 추가)
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp6ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+        # Top News
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
     ]
 
     news_list = []
-    cutoff = datetime.utcnow() - timedelta(hours=24)  # 최근 24시간 확대
+    cutoff = datetime.utcnow() - timedelta(hours=24)
 
     for url in feeds:
         feed = feedparser.parse(url)
-        print(f"{url} → {len(feed.entries)}개 항목")
+        print(f"{url} → {len(feed.entries)}개 항목 확인")
 
         for entry in feed.entries:
             if len(news_list) >= 30:
@@ -66,19 +64,14 @@ def collect_news():
                 })
 
     # 중복 제거
-    seen = set()
-    unique = []
-    for item in news_list:
-        if item['title'] not in seen:
-            seen.add(item['title'])
-            unique.append(item)
+    unique = list({item['title']: item for item in news_list}.values())[:20]
 
-    final = unique[:20]
-
-    print(f"최종 {len(final)}개 속보 수집")
+    print(f"최종 {len(unique)}개 속보 수집 완료")
 
     with open('breaking_news.json', 'w', encoding='utf-8') as f:
-        json.dump(final, f, indent=2, ensure_ascii=False)
+        json.dump(unique, f, indent=2, ensure_ascii=False)
+
+    print("breaking_news.json 저장 완료")
 
 if __name__ == "__main__":
     collect_news()
