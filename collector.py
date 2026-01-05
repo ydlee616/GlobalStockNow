@@ -1,45 +1,49 @@
 #!/usr/bin/env python3
-# GlobalStockNow News Collector v0.7 - 필터 강화 버전 (2026.1.3)
+# GlobalStockNow News Collector v0.8 - 균형 필터 버전 (2026.1.6)
 
 import feedparser
 import json
 from datetime import datetime, timedelta
 import re
 
-# 정제된 키워드 (주식/경제 특정 용어 위주)
+# 균형 잡힌 키워드 (정확 매칭 + 일부 일반 단어 허용)
 KEYWORDS = [
-    'nvidia', 'amd', 'intel', 'tsmc', 'samsung electronics', 'sk hynix', 'semiconductor', 'chip shortage',
-    'fed', 'federal reserve', 'interest rate', 'powell', 'fomc', 'rate cut',
-    'tesla', 'ev sales', 'cybertruck',
-    'apple', 'iphone', 'aapl', 'microsoft', 'msft', 'amazon', 'amzn', 'meta',
-    'oil price', 'opec', 'brent', 'wti',
-    'bitcoin price', 'btc', 'crypto market', 'ethereum',
-    'trade war', 'tariff', 'china economy'
+    'nvidia', 'amd', 'intel', 'tsmc', 'samsung', 'sk hynix', 'semiconductor', 'chip',
+    'fed', 'federal reserve', 'interest rate', 'powell', 'fomc',
+    'tesla', 'ev', 'cybertruck', 'model',
+    'apple', 'iphone', 'microsoft', 'amazon', 'meta', 'google',
+    'oil', 'opec', 'brent', 'wti',
+    'bitcoin', 'btc', 'crypto', 'ethereum',
+    'trade war', 'tariff', 'china'
 ]
 
 def is_relevant(content):
     content_lower = content.lower()
     for kw in KEYWORDS:
-        if re.search(r'\b' + re.escape(kw.lower()) + r'\b', content_lower):
+        if kw.lower() in content_lower:  # 간단한 포함 매칭 (오매칭 최소화)
             return True
     return False
 
 def collect_news():
-    print("속보 수집 시작 - 강화 버전")
+    print("속보 수집 시작 - 균형 버전")
 
     feeds = [
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Business
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en"   # Technology
+        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Technology
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"  # Top News 추가 (보완)
     ]
 
     news_list = []
-    cutoff = datetime.utcnow() - timedelta(hours=12)
+    cutoff = datetime.utcnow() - timedelta(hours=24)  # 최근 24시간 확대
 
     for url in feeds:
         feed = feedparser.parse(url)
         print(f"{url} → {len(feed.entries)}개 항목")
 
         for entry in feed.entries:
+            if len(news_list) >= 30:
+                break
+
             pub_parsed = entry.get('published_parsed')
             if pub_parsed:
                 pub_time = datetime(*pub_parsed[:6])
@@ -61,9 +65,6 @@ def collect_news():
                     "summary": summary[:300]
                 })
 
-            if len(news_list) >= 20:
-                break
-
     # 중복 제거
     seen = set()
     unique = []
@@ -72,12 +73,12 @@ def collect_news():
             seen.add(item['title'])
             unique.append(item)
 
-    print(f"최종 {len(unique)}개 속보 수집")
+    final = unique[:20]
+
+    print(f"최종 {len(final)}개 속보 수집")
 
     with open('breaking_news.json', 'w', encoding='utf-8') as f:
-        json.dump(unique, f, indent=2, ensure_ascii=False)
-
-    print("breaking_news.json 저장 완료")
+        json.dump(final, f, indent=2, ensure_ascii=False)
 
 if __name__ == "__main__":
     collect_news()
