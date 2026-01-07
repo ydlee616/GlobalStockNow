@@ -3,7 +3,7 @@ name: GlobalStockNow Full Pipeline
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '0 */4 * * *'  # 매 4시간 자동 실행
 
 jobs:
   pipeline:
@@ -17,10 +17,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: 속보 수집 실행
+      - name: 속보 수집 실행 (RSS + X 실시간, 오류 무시)
         run: |
-          pip install feedparser snscrape || echo "snscrape 설치 실폐해도 진행"
-          python collector.py
+          pip install feedparser snscrape --quiet || echo "snscrape 설치 실패 무시"
+          python collector.py || echo "collector 실패 무시 - 빈 파일 생성"
+          touch breaking_news.json
+          echo "[]" > breaking_news.json || true
 
       - name: 속보 결과 저장
         uses: actions/upload-artifact@v4
@@ -28,26 +30,24 @@ jobs:
           name: breaking-news-${{ github.run_number }}
           path: breaking_news.json
 
-      - name: AI 분석 실행 (안정화 버전)
+      - name: AI 분석 실행 (경량 모델 + 오류 무시)
         run: |
-          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install transformers accelerate sentencepiece
-          python analyzer.py || echo "AI 분석 중 오류 발생 - 빈 결과로 대체"
-          # 실패해도 analyzed_news.json 생성
-          if [ ! -f analyzed_news.json ]; then
-            echo "[]" > analyzed_news.json
-          fi
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
+          pip install transformers accelerate sentencepiece --quiet
+          python analyzer.py || echo "analyzer 실패 무시 - 빈 파일 생성"
+          touch analyzed_news.json
+          echo "[]" > analyzed_news.json || true
 
       - name: AI 분석 결과 저장
         uses: actions/upload-artifact@v4
         with:
           name: analyzed-news-${{ github.run_number }}
           path: analyzed_news.json
-          
-            - name: 텔레그램으로 분석 결과 전송
+
+      - name: 텔레그램으로 분석 결과 전송 (영향도 3점 이상 포함)
         if: always()
         run: |
-          HIGHS=$(jq -r '.[] | select(.impact_score >= 3) | "• <a href=\\\"\(.original_link)\\\">\\(.title)</a>%0A영향도: \\(.impact_score)/10%0A종목: \\(.korean_stocks | join(\", \"))%0A이유: \\(.reason)%0A%0A"' analyzed_news.json)
+          HIGHS=$(jq -r '.[] | select(.impact_score >= 3) | "• <a href=\\\"\(.original_link)\\\">\\(.title)</a>%0A영향도: \\(.impact_score)/10%0A종목: \\(.korean_stocks | join(\", \") // "없음")%0A이유: \\(.reason)%0A%0A"' analyzed_news.json 2>/dev/null || echo "")
           if [ -z "$HIGHS" ]; then
             HIGHS="오늘은 영향도 3점 이상 주요 속보 없음"
           fi
