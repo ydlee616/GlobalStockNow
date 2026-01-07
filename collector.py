@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-# GlobalStockNow Collector v1.1 - 영문 키워드 + 신기술/신상품 강화 (2026.1.7)
+# GlobalStockNow Collector v2.0 - 경제/기술 뉴스 대폭 강화 (2026.1.7)
 
 import feedparser
 import json
 from datetime import datetime, timedelta
 
-# 영문 키워드 (경제 + 신기술/신상품 중심)
+# 키워드 대폭 확장 (한국 관련 기업 + 글로벌 경제/기술)
 KEYWORDS = [
-    'nvidia', 'tesla', 'fed', 'oil', 'bitcoin', 'semiconductor', 'ev', 'apple', 'microsoft', 'amazon',
-    'samsung', 'sk hynix', 'interest rate', 'crypto', 'tariff', 'china',
-    'new product', 'launch', 'ces', 'ai', 'quantum', 'new chip', 'new phone', 'new car', 'new battery',
-    'new technology', 'breakthrough', 'innovation', 'unveiled', 'announced', 'released'
+    # 한국 기업
+    'samsung', 'sk hynix', 'lg energy', 'hyundai', 'kia', 'posco', 'kakao', 'naver',
+    # 글로벌 주요
+    'nvidia', 'tesla', 'apple', 'microsoft', 'google', 'amazon', 'meta', 'intel', 'amd',
+    'qualcomm', 'tsmc', 'asml',
+    # 경제/기술 키워드
+    'semiconductor', 'chip', 'hbm', 'ev', 'battery', 'ai', 'artificial intelligence',
+    'quantum', '5g', '6g', 'oled', 'display', 'foundry', 'memory', 'dram', 'nand',
+    'fed', 'interest rate', 'inflation', 'tariff', 'trade war', 'china', 'supply chain',
+    'new product', 'launch', 'ces', 'earnings', 'revenue', 'profit', 'guidance'
 ]
 
 def is_relevant(content):
@@ -18,24 +24,26 @@ def is_relevant(content):
     return any(kw.lower() in content_lower for kw in KEYWORDS)
 
 def collect_news():
-    print("속보 수집 시작 - 신기술/신상품 강화 버전")
+    print("속보 수집 시작 - 경제/기술 강화 버전")
 
     feeds = [
+        # Business + Technology + World 우선
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Business
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Technology
+        "https://news.google.com/rss/topics/CAAqKggKIiRDQkFTRlFvSUwyMHZNRGx1YlRZU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US:en",  # World
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp6ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",  # Science
-        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"  # Top News
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
     ]
 
     news_list = []
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = datetime.utcnow() - timedelta(hours=36)  # 범위 넓힘
 
     for url in feeds:
         feed = feedparser.parse(url)
-        print(f"{url} → {len(feed.entries)}개 항목 확인")
+        print(f"{url} → {len(feed.entries)}개 항목")
 
         for entry in feed.entries:
-            if len(news_list) >= 30:
+            if len(news_list) >= 40:
                 break
 
             pub_parsed = entry.get('published_parsed')
@@ -54,18 +62,15 @@ def collect_news():
                     "title": title,
                     "link": entry.link,
                     "published": pub_time.strftime("%Y-%m-%d %H:%M UTC"),
-                    "summary": summary[:300]
+                    "summary": summary[:400]
                 })
 
-    # 중복 제거
-    unique = list({item['title']: item for item in news_list}.values())[:20]
+    unique = list({v['title']: v for v in news_list}.values())[:25]
 
-    print(f"최종 {len(unique)}개 속보 수집 완료")
+    print(f"최종 {len(unique)}개 속보 수집")
 
     with open('breaking_news.json', 'w', encoding='utf-8') as f:
         json.dump(unique, f, indent=2, ensure_ascii=False)
-
-    print("breaking_news.json 저장 완료")
 
 if __name__ == "__main__":
     collect_news()
