@@ -19,7 +19,7 @@ jobs:
 
       - name: 속보 수집 실행
         run: |
-          pip install feedparser snscrape
+          pip install feedparser snscrape || echo "snscrape 설치 실폐해도 진행"
           python collector.py
 
       - name: 속보 결과 저장
