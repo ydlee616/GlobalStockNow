@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# GlobalStockNow Analyzer v1.6 - 신기술/IT 뉴스 강제 포함 + 환각 최소화 (2026.1.8)
+# GlobalStockNow Analyzer v1.7 - 행간/파급효과 분석 강화 + 신기술/IT 강제 포함 (2026.1.8)
 
 import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -33,7 +33,7 @@ def analyze_news(news_list):
         is_tech_news = any(kw in content_lower for kw in tech_keywords)
 
         prompt = f"""
-다음 해외 뉴스를 한국 주식 시장 투자자 관점에서 분석하세요. **사실에 기반해서만 답변하고, 추측이나 가짜 정보는 절대 만들지 마세요.**
+다음 해외 뉴스를 한국 주식 시장 투자자 관점에서 분석하세요. **사실에 기반해서만 답변하고, 추측이나 가짜 정보는 절대 만들지 마세요. 뉴스 내용의 행간을 잘 파악하여 잠재적 파급효과를 고려해서 분석하세요.**
 
 제목: {title}
 요약: {summary}
@@ -45,7 +45,7 @@ def analyze_news(news_list):
 
 1. 한국 시장 영향도: 0~10점 (0점: 무관 또는 영향 미미)
 2. 영향 받는 한국 종목: 뉴스에 직접 관련된 종목만 나열 (없으면 빈 목록)
-3. 이유: 한글로 1~2문장, 뉴스에 나온 사실만 기반으로 설명
+3. 이유: 한글로 1~2문장, 뉴스에 나온 사실과 행간/파급효과 기반으로 설명
 
 반드시 이 JSON 형식으로만 출력:
 {{
@@ -61,9 +61,9 @@ def analyze_news(news_list):
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=250,
-                temperature=0.3,  # 환각 최소화
-                top_p=0.9,
+                max_new_tokens=300,
+                temperature=0.4,  # 파급효과 분석 위해 약간 높임
+                top_p=0.95,
                 do_sample=True
             )
 
