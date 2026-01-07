@@ -43,3 +43,12 @@ jobs:
         with:
           name: analyzed-news-${{ github.run_number }}
           path: analyzed_news.json
+          
+      - name: 텔레그램으로 분석 결과 전송
+        if: always()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+            -d parse_mode=HTML \
+            -d text="<b>🌍 글로벌스톡나우 속보 브리핑 (#${{ github.run_number }})</b>%0A%0A$(jq -r '.[] | \"• <a href=\\\"\(.original_link)\\\">\\(.title)</a>%0A영향도: \\(.impact_score)/10%0A종목: \\(.korean_stocks | join(\", \"))%0A이유: \\(.reason)%0A%0A\"' analyzed_news.json || echo '오늘은 주요 속보 없음')%0A%0A<i>AI 자동 분석 완료 - 글로벌스톡나우</i>"
+            
