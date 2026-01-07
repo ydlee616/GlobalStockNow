@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# GlobalStockNow Analyzer v1.3 - reason 한글 상세 출력 강화 (2026.1.7)
+# GlobalStockNow Analyzer v1.4 - 경량 모델 (Qwen2.5-0.5B) (2026.1.7)
 
 import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
+MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"  # 0.5B 경량 모델
 
-print("AI 모델 로딩 시작")
+print("AI 모델 로딩 시작 (경량 버전)")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
@@ -29,11 +29,11 @@ def analyze_news(news_list):
 제목: {title}
 요약: {summary}
 
-1. 한국 주식 시장 영향도: 0~10점 (0점: 무관, 10점: 매우 강한 직접 영향)
+1. 한국 시장 영향도: 0~10점 (0점: 무관, 10점: 매우 강함)
 2. 영향 받는 한국 종목: 목록 (없으면 빈 목록)
-3. 이유: 한글로 1~2문장 상세 설명 (한국 시장 중심)
+3. 이유: 한글로 1~2문장 상세 설명
 
-반드시 이 JSON 형식으로만 출력하세요:
+JSON 형식으로만 출력:
 {{
   "title": "{title}",
   "impact_score": 점수,
@@ -47,22 +47,19 @@ def analyze_news(news_list):
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=300,
-                temperature=0.3,
-                do_sample=True
+                max_new_tokens=200,
+                temperature=0.4
             )
 
         response = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-        response = response[len(prompt):].strip()  # 프롬프트 제거
+        response = response[len(prompt):].strip()
 
         try:
-            # JSON 추출 강화
             start = response.find('{')
             end = response.rfind('}') + 1
             json_str = response[start:end]
             analyzed = json.loads(json_str)
-        except Exception:
-            # 실패 시 기본값 (무관 뉴스 처리)
+        except:
             analyzed = {
                 "title": title,
                 "impact_score": 0,
@@ -80,7 +77,7 @@ if __name__ == "__main__":
     try:
         with open('breaking_news.json', 'r', encoding='utf-8') as f:
             news_data = json.load(f)
-    except FileNotFoundError:
+    except:
         news_data = []
 
     analyzed_data = analyze_news(news_data)
@@ -88,4 +85,4 @@ if __name__ == "__main__":
     with open('analyzed_news.json', 'w', encoding='utf-8') as f:
         json.dump(analyzed_data, f, indent=2, ensure_ascii=False)
 
-    print(f"AI 분석 완료 - {len(analyzed_data)}개 뉴스 처리")
+    print(f"AI 분석 완료 - {len(analyzed_data)}개 처리")
