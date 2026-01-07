@@ -1,77 +1,87 @@
 #!/usr/bin/env python3
-# GlobalStockNow Collector v1.1 - 영문 키워드 + 신기술/신상품 강화 (2026.1.6)
+# GlobalStockNow Analyzer v1.2 - 한글 출력 강화 (2026.1.7)
 
-import feedparser
 import json
-from datetime import datetime, timedelta
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
-# 모든 키워드 영문화 (신기술/신상품 중심)
-KEYWORDS = [
-    'nvidia', 'tesla', 'fed', 'oil', 'bitcoin', 'semiconductor', 'ev', 'apple', 'microsoft', 'amazon',
-    'samsung', 'sk hynix', 'interest rate', 'crypto', 'tariff', 'china',
-    'new product', 'launch', 'ces', 'ai', 'quantum', 'new chip', 'new phone', 'new car', 'new battery',
-    'new technology', 'breakthrough', 'innovation', 'unveiled', 'announced', 'released'
-]
+MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
-def is_relevant(content):
-    content_lower = content.lower()
-    return any(kw.lower() in content_lower for kw in KEYWORDS)
+print("AI 모델 로딩 시작")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.float32,
+    device_map="auto",
+    low_cpu_mem_usage=True
+)
+print("AI 모델 로딩 완료")
 
-def collect_news():
-    print("속보 수집 시작 - 영문 키워드 + 신기술 강화 버전")
+def analyze_news(news_list):
+    results = []
+    for item in news_list:
+        title = item['title']
+        summary = item.get('summary', '')
 
-    feeds = [
-        # Business
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5BU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
-        # Technology (신기술/신상품 핵심)
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
-        # Science (신기술 추가)
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp6ZEdBU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
-        # Top News
-        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
-    ]
+        prompt = f"""
+다음 해외 속보를 한국 주식 시장 관점에서 분석해 주세요.
 
-    news_list = []
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+뉴스 제목: {title}
+요약: {summary}
 
-    for url in feeds:
-        feed = feedparser.parse(url)
-        print(f"{url} → {len(feed.entries)}개 항목 확인")
+영향도 0~10점 평가 (0: 무관, 10: 매우 강한 영향)
+관련 한국 종목 목록과 이유를 한글로 설명하세요.
 
-        for entry in feed.entries:
-            if len(news_list) >= 30:
-                break
+JSON 형식으로만 출력:
+{{
+  "title": "{title}",
+  "impact_score": 점수,
+  "korean_stocks": ["종목1", "종목2"],
+  "reason": "상세 이유"
+}}
+"""
 
-            pub_parsed = entry.get('published_parsed')
-            if pub_parsed:
-                pub_time = datetime(*pub_parsed[:6])
-            else:
-                continue
+        inputs = tokenizer(prompt, return_tensors="pt")
 
-            if pub_time < cutoff:
-                continue
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=300,
+                temperature=0.4
+            )
 
-            title = entry.title
-            summary = entry.get('summary', '') or ''
-            content = title + " " + summary
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        response = response[len(prompt):].strip()
 
-            if is_relevant(content):
-                news_list.append({
-                    "title": title,
-                    "link": entry.link,
-                    "published": pub_time.strftime("%Y-%m-%d %H:%M UTC"),
-                    "summary": summary[:300]
-                })
+        try:
+            json_start = response.rfind('{')
+            json_end = response.rfind('}') + 1
+            json_str = response[json_start:json_end]
+            analyzed = json.loads(json_str)
+        except:
+            analyzed = {
+                "title": title,
+                "impact_score": 0,
+                "korean_stocks": [],
+                "reason": "분석 실패 - 한국 시장 영향 없음으로 판단"
+            }
 
-    # 중복 제거
-    unique = list({item['title']: item for item in news_list}.values())[:20]
+        analyzed["original_link"] = item['link']
+        analyzed["published"] = item['published']
+        results.append(analyzed)
 
-    print(f"최종 {len(unique)}개 속보 수집 완료")
-
-    with open('breaking_news.json', 'w', encoding='utf-8') as f:
-        json.dump(unique, f, indent=2, ensure_ascii=False)
-
-    print("breaking_news.json 저장 완료")
+    return results
 
 if __name__ == "__main__":
-    collect_news()
+    try:
+        with open('breaking_news.json', 'r', encoding='utf-8') as f:
+            news_data = json.load(f)
+    except:
+        news_data = []
+
+    analyzed_data = analyze_news(news_data)
+
+    with open('analyzed_news.json', 'w', encoding='utf-8') as f:
+        json.dump(analyzed_data, f, indent=2, ensure_ascii=False)
+
+    print(f"AI 분석 완료 - {len(analyzed_data)}개 결과")
