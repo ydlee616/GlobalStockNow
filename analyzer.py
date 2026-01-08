@@ -21,17 +21,23 @@ TECH_KEYWORDS = [
     'Battery', 'EV', 'Smart', 'Innovation', 'Samsung', 'LG', 'SK'
 ]
 
+# [analyzer.py의 load_news 함수를 이걸로 교체하세요]
 def load_news():
     """수집된 뉴스 파일(breaking_news.json)을 읽어옵니다."""
     filename = 'breaking_news.json'
+    
+    # 파일이 아예 없으면 빈 리스트 반환 (에러 방지)
     if not os.path.exists(filename):
-        print(f"❌ [오류] '{filename}' 파일이 없습니다. 먼저 뉴스를 수집해주세요.")
+        print(f"⚠️ '{filename}' 파일이 없습니다. 빈 리스트로 진행합니다.")
         return []
     
-    with open(filename, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        # collector.py 버전에 따라 포맷이 다를 수 있어 유연하게 처리
-        return data.get('articles', data) if isinstance(data, dict) else data
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get('articles', data) if isinstance(data, dict) else data
+    except Exception as e:
+        print(f"❌ 파일 읽기 오류: {e}")
+        return []
 
 def analyze_news_with_gemini(articles):
     """Gemini 1.5 Pro에게 뉴스를 분석시킵니다."""
@@ -123,14 +129,17 @@ def save_result(analyzed_list):
         json.dump(final_data, f, ensure_ascii=False, indent=4)
     print(f"💾 리포트 저장 완료: {filename}")
 
+# [analyzer.py의 맨 아래 부분을 이걸로 교체하세요]
 if __name__ == "__main__":
     # 1. 뉴스 로드
     raw_news = load_news()
     
-    # 2. AI 분석
+    # 2. AI 분석 (데이터가 없어도 실행해서 빈 파일 저장)
+    reports = []
     if raw_news:
         reports = analyze_news_with_gemini(raw_news)
-        # 3. 저장
-        save_result(reports)
     else:
-        print("분석할 뉴스가 없습니다.")
+        print("분석할 뉴스 데이터가 없습니다.")
+
+    # 3. 결과 무조건 저장
+    save_result(reports)
