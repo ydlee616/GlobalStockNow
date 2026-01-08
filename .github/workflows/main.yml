@@ -1,57 +1,75 @@
-name: GlobalStockNow Full Pipeline
+name: GlobalStockNow AI Pipeline
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:      # 수동 실행 버튼
   schedule:
-    - cron: '0 */4 * * *'  # 매 4시간 자동 실행
+    - cron: '0 */4 * * *' # 매 4시간마다 자동 실행 (UTC 기준)
 
 jobs:
-  pipeline:
+  run-pipeline:
     runs-on: ubuntu-latest
+    
     steps:
+      # 1. 코드 가져오기
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. 파이썬 환경 설정
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
-      - name: 속보 수집 실행 (RSS + X 실시간, 오류 무시)
+      # 3. 필수 도구 설치 (requirements.txt 활용)
+      - name: Install Dependencies
         run: |
-          pip install feedparser snscrape --quiet || echo "snscrape 설치 실패 무시"
-          python collector.py || echo "collector 실패 무시 - 빈 파일 생성"
-          touch breaking_news.json
-          echo "[]" > breaking_news.json || true
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: 속보 결과 저장
+      # 4. 뉴스 수집 (Gemini 검색)
+      - name: 1단계 - 속보 수집 (Collector)
+        env:
+          # 소스코드에 키가 있지만, 혹시 모를 환경변수 참조를 위해 남겨둠 (선택사항)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }} 
+        run: |
+          python collector.py
+
+      # 5. 수집 결과 백업 (선택사항)
+      - name: 수집 데이터 저장 (Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: breaking-news-${{ github.run_number }}
+          name: raw-news-data
           path: breaking_news.json
+          retention-days: 3
 
-      - name: AI 분석 실행 (경량 모델 + 오류 무시)
+      # 6. AI 분석 (Gemini 1.5 Pro)
+      - name: 2단계 - 심층 분석 (Analyzer)
         run: |
-          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --quiet
-          pip install transformers accelerate sentencepiece --quiet
-          python analyzer.py || echo "analyzer 실패 무시 - 빈 파일 생성"
-          touch analyzed_news.json
-          echo "[]" > analyzed_news.json || true
+          python analyzer.py
 
-      - name: AI 분석 결과 저장
+      # 7. 분석 결과 백업
+      - name: 분석 리포트 저장 (Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: analyzed-news-${{ github.run_number }}
+          name: ai-analysis-report
           path: analyzed_news.json
+          retention-days: 3
 
-      - name: 텔레그램으로 분석 결과 전송 (영향도 3점 이상 포함)
-        if: always()
+      # 8. 텔레그램 알림 발송
+      - name: 3단계 - 텔레그램 브리핑
+        if: always() # 앞 단계가 실패해도 알림 시도
         run: |
-          HIGHS=$(jq -r '.[] | select(.impact_score >= 3) | "• <a href=\\\"\(.original_link)\\\">\\(.title)</a>%0A영향도: \\(.impact_score)/10%0A종목: \\(.korean_stocks | join(\", \") // "없음")%0A이유: \\(.reason)%0A%0A"' analyzed_news.json 2>/dev/null || echo "")
-          if [ -z "$HIGHS" ]; then
-            HIGHS="오늘은 영향도 3점 이상 주요 속보 없음"
+          # analyzed_news.json에서 필요한 정보만 뽑아서 메시지 만들기
+          # jq를 사용하여 JSON 파싱 (새로운 포맷인 .reports[] 구조 대응)
+          
+          REPORT_CONTENT=$(jq -r '.reports[] | "🚨 <b>\(.title)</b>%0A(Impact: \(.impact_score)/10)%0A📊 관련종목: \(.related_stocks | join(", "))%0A💡 분석: \(.analysis)%0A%0A"' analyzed_news.json 2>/dev/null)
+          
+          if [ -z "$REPORT_CONTENT" ]; then
+            REPORT_CONTENT="✅ 현재 영향도 7.0 이상의 특이사항 뉴스 없음."
           fi
+
+          # 텔레그램 API 전송
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
             -d parse_mode=HTML \
-            -d text="<b>🌍 글로벌스톡나우 속보 브리핑 (#${{ github.run_number }})</b>%0A%0A$HIGHS%0A<i>AI 자동 분석 완료 - 글로벌스톡나우</i>"
+            -d text="<b>🌍 GlobalStockNow AI 브리핑</b>%0A%0A$REPORT_CONTENT"
