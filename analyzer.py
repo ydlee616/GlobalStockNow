@@ -2,6 +2,7 @@ import json
 import time
 import requests
 import os
+import re  # 정규표현식 모듈 추가 (핵심)
 import google.generativeai as genai
 from datetime import datetime
 
@@ -11,8 +12,6 @@ from datetime import datetime
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
-# GitHub Actions 실행 번호 가져오기 (없으면 'Local'로 표시)
 RUN_NUMBER = os.environ.get("GITHUB_RUN_NUMBER", "Local")
 
 # 파일 경로
@@ -25,11 +24,9 @@ if GOOGLE_API_KEY:
     model = genai.GenerativeModel('gemini-1.5-flash')
 else:
     print("❌ Error: GOOGLE_API_KEY가 설정되지 않았습니다.")
-    # 로컬 테스트가 아닐 경우 종료하고 싶다면 exit(1) 주석 해제
-    # exit(1)
 
 # ==========================================
-# 1. 뉴스 분석 함수
+# 1. 뉴스 분석 함수 (Regex 파싱 적용)
 # ==========================================
 def analyze_news_batch(articles):
     results = []
@@ -60,14 +57,23 @@ def analyze_news_batch(articles):
 
         try:
             response = model.generate_content(prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            batch_result = json.loads(clean_text)
             
-            if isinstance(batch_result, list):
-                results.extend(batch_result)
+            # [수정된 핵심 파트] 정규표현식으로 JSON 리스트([ ... ])만 강제로 추출
+            match = re.search(r'\[.*\]', response.text, re.DOTALL)
+            
+            if match:
+                clean_text = match.group()
+                batch_result = json.loads(clean_text)
+                
+                if isinstance(batch_result, list):
+                    results.extend(batch_result)
+                else:
+                    results.append(batch_result)
             else:
-                results.append(batch_result)
-            time.sleep(1)
+                print(f"⚠️ Batch {i}: JSON 패턴을 찾을 수 없음. 응답 원본: {response.text[:100]}...")
+
+            time.sleep(1) # API 부하 방지
+            
         except Exception as e:
             print(f"⚠️ Error in batch {i}: {e}")
             continue
@@ -80,7 +86,7 @@ def analyze_news_batch(articles):
 def save_results(data):
     output_data = {
         "analyzed_at": str(datetime.now()),
-        "run_number": RUN_NUMBER,  # 데이터 파일에도 번호 기록
+        "run_number": RUN_NUMBER,
         "count": len(data),
         "reports": data
     }
@@ -92,32 +98,42 @@ def save_results(data):
     return output_data
 
 # ==========================================
-# 3. 텔레그램 전송 함수 (제목 수정됨)
+# 3. 텔레그램 전송 함수
 # ==========================================
 def send_telegram_report(analyzed_data):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ 텔레그램 설정이 없어 전송을 건너뜁니다.")
         return
 
-    # 데이터가 없어도 '특이사항 없음' 메시지를 보내고 싶다면 아래 조건문을 수정해야 함
-    # 현재는 데이터가 있을 때만 보냄
+    # 데이터가 없으면 알림
     if not analyzed_data['reports']:
         print("📭 전송할 분석 데이터가 없습니다.")
+        # 빈 메시지라도 보내서 확인하고 싶다면 아래 주석 해제
+        # requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [Run #{RUN_NUMBER}] 분석된 데이터가 0건입니다. 로그를 확인하세요."})
         return
 
     print("🚀 텔레그램 전송 시작...")
     
-    top_reports = analyzed_data['reports'][:5] 
+    # 중요도 로직: 'Positive'나 'Negative'인 것을 먼저 보여줌
+    reports = analyzed_data['reports']
+    important_news = [r for r in reports if r.get('impact') in ['Positive', 'Negative']]
+    other_news = [r for r in reports if r.get('impact') == 'Neutral']
     
-    # ▼▼▼ [수정된 부분] 제목에 파이프라인 번호 포함 ▼▼▼
-    message = f"📢 **[GlobalStockNow 속보 브리핑 (#{RUN_NUMBER})]**\n"
+    # 중요 뉴스 우선 정렬 + 최대 5개
+    final_list = (important_news + other_news)[:5]
+    
+    message = f"📢 **[GlobalStockNow 분석 (#{RUN_NUMBER})]**\n"
     message += f"({analyzed_data['analyzed_at'][:16]})\n\n"
     
-    for item in top_reports:
+    for item in final_list:
         icon = "🔥" if item.get('impact') == 'Positive' else "🔻" if item.get('impact') == 'Negative' else "➖"
-        message += f"{icon} **{item['title']}**\n"
-        message += f"└ {item['summary']}\n"
-        message += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
+        title = item.get('title', '제목 없음')
+        summary = item.get('summary', '요약 없음')
+        stocks = ', '.join(item.get('related_stocks', []))
+        
+        message += f"{icon} **{title}**\n"
+        message += f"└ {summary}\n"
+        message += f"└ 관련주: {stocks}\n\n"
     
     message += f"👉 총 {analyzed_data['count']}건 분석 완료."
 
