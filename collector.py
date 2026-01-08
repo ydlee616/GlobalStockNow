@@ -101,12 +101,14 @@ def save_to_json(news_list):
         json.dump(data, f, ensure_ascii=False, indent=4)
     print(f"💾 저장 완료: {filename}")
 
+# [collector.py의 맨 아래 부분을 이걸로 교체하세요]
 if __name__ == "__main__":
-    # 1. 뉴스 수집
+    # 1. 뉴스 수집 시도
     articles = get_smart_news()
     
-    # 2. 결과 저장 (다음 단계 Analyzer가 읽을 수 있도록)
-    if articles:
-        save_to_json(articles)
-    else:
-        print("수집된 뉴스가 없습니다.")
+    # 2. 결과 저장 (뉴스가 없어도 빈 파일 [] 생성)
+    if not articles:
+        print("⚠️ 수집된 뉴스가 없습니다. 빈 리스트를 저장합니다.")
+        articles = []
+        
+    save_to_json(articles)
