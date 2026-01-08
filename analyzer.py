@@ -21,6 +21,7 @@ TECH_KEYWORDS = [
     'Battery', 'EV', 'Smart', 'Innovation', 'Samsung', 'LG', 'SK'
 ]
 
+# [analyzer.py의 load_news 함수를 이걸로 교체하세요]
 def load_news():
     """수집된 뉴스 파일(breaking_news.json)을 읽어옵니다."""
     filename = 'breaking_news.json'
@@ -124,16 +125,17 @@ def save_result(analyzed_list):
         json.dump(final_data, f, ensure_ascii=False, indent=4)
     print(f"💾 리포트 저장 완료: {filename}")
 
+# [analyzer.py의 맨 아래 부분을 이걸로 교체하세요]
 if __name__ == "__main__":
     # 1. 뉴스 로드
     raw_news = load_news()
     
-    # 2. AI 분석 (데이터가 없어도 빈 리스트 처리)
+    # 2. AI 분석 (데이터가 없어도 실행해서 빈 파일 저장)
     reports = []
     if raw_news:
         reports = analyze_news_with_gemini(raw_news)
     else:
-        print("⚠️ 분석할 뉴스 데이터가 없습니다. 빈 리포트를 생성합니다.")
+        print("분석할 뉴스 데이터가 없습니다.")
 
-    # 3. 결과 무조건 저장 (파일 생성 보장)
+    # 3. 결과 무조건 저장
     save_result(reports)
