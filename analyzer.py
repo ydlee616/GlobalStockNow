@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# GlobalStockNow Analyzer v5.0 (Powered by Gemini Pro)
+# GlobalStockNow Analyzer v5.1 (Final Stable)
 # 작성일: 2026.01.09
-# 기능: 수집된 속보를 Gemini Pro로 정밀 분석 (IT/테크 뉴스 강제 포함 기능 탑재)
+# 기능: 수집된 속보를 Gemini Pro로 정밀 분석 (오류 방지 및 IT 강제 포함 로직 적용)
 
 import json
 import os
@@ -10,7 +10,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # ---------------------------------------------------------
-# [설정] collector.py와 동일한 API 키를 입력하세요
+# [설정] API KEY
 # ---------------------------------------------------------
 API_KEY = "AIzaSyAZo0o_Sq6ojtLnbmJ5mjqCelKFuBw15dY"
 
@@ -21,7 +21,6 @@ TECH_KEYWORDS = [
     'Battery', 'EV', 'Smart', 'Innovation', 'Samsung', 'LG', 'SK'
 ]
 
-# [analyzer.py의 load_news 함수를 이걸로 교체하세요]
 def load_news():
     """수집된 뉴스 파일(breaking_news.json)을 읽어옵니다."""
     filename = 'breaking_news.json'
@@ -48,11 +47,7 @@ def analyze_news_with_gemini(articles):
     
     genai.configure(api_key=API_KEY)
     
-    # ---------------------------------------------------------
-    # [모델 선택] 보스, 여기서 모델을 변경할 수 있습니다.
-    # 안정성 추천: 'gemini-1.5-pro-latest'
-    # 최신 성능(만약 가능하면): 'gemini-3.0-pro-latest' 또는 'gemini-experimental'
-    # ---------------------------------------------------------
+    # 모델 설정 (안정성: 1.5 Pro)
     model_name = 'gemini-1.5-pro-latest' 
     model = genai.GenerativeModel(model_name)
 
@@ -100,7 +95,7 @@ def analyze_news_with_gemini(articles):
 
         response = model.generate_content(prompt, safety_settings=safety_settings)
         
-        # JSON 정제 (마크다운 코드블록 제거)
+        # JSON 정제
         raw_text = response.text
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[1].split("```")[0]
@@ -108,7 +103,7 @@ def analyze_news_with_gemini(articles):
             raw_text = raw_text.split("```")[1].split("```")[0]
             
         analyzed_data = json.loads(raw_text.strip())
-        print(f"✅ 분석 완료: {len(analyzed_data)}개의 유의미한 리포트 생성 (Model: {model_name})")
+        print(f"✅ 분석 완료: {len(analyzed_data)}개의 유의미한 리포트 생성")
         return analyzed_data
 
     except Exception as e:
@@ -129,17 +124,16 @@ def save_result(analyzed_list):
         json.dump(final_data, f, ensure_ascii=False, indent=4)
     print(f"💾 리포트 저장 완료: {filename}")
 
-# [analyzer.py의 맨 아래 부분을 이걸로 교체하세요]
 if __name__ == "__main__":
     # 1. 뉴스 로드
     raw_news = load_news()
     
-    # 2. AI 분석 (데이터가 없어도 실행해서 빈 파일 저장)
+    # 2. AI 분석 (데이터가 없어도 빈 리스트 처리)
     reports = []
     if raw_news:
         reports = analyze_news_with_gemini(raw_news)
     else:
-        print("분석할 뉴스 데이터가 없습니다.")
+        print("⚠️ 분석할 뉴스 데이터가 없습니다. 빈 리포트를 생성합니다.")
 
-    # 3. 결과 무조건 저장
+    # 3. 결과 무조건 저장 (파일 생성 보장)
     save_result(reports)
