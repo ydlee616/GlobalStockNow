@@ -1,2 +1,4 @@
 google-generativeai
 duckduckgo-search
+google-generativeai
+requests
