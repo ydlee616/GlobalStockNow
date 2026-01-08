@@ -1,110 +1,136 @@
 #!/usr/bin/env python3
-# GlobalStockNow Analyzer v1.7 - 행간/파급효과 분석 강화 + 신기술/IT 강제 포함 (2026.1.8)
+# GlobalStockNow Analyzer v5.0 (Powered by Gemini Pro)
+# 작성일: 2026.01.09
+# 기능: 수집된 속보를 Gemini Pro로 정밀 분석 (IT/테크 뉴스 강제 포함 기능 탑재)
 
 import json
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
+import os
+import datetime
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"  # 안정성 높은 1.5B 모델
+# ---------------------------------------------------------
+# [설정] collector.py와 동일한 API 키를 입력하세요
+# ---------------------------------------------------------
+API_KEY = "AIzaSyAZo0o_Sq6ojtLnbmJ5mjqCelKFuBw15dY"
 
-print("AI 모델 로딩 시작 (Qwen2.5-1.5B)")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=torch.float32,
-    device_map="auto",
-    low_cpu_mem_usage=True
-)
-print("AI 모델 로딩 완료")
+# 보스가 지정한 '무조건 살려야 하는' 키워드 목록
+TECH_KEYWORDS = [
+    'CES', 'Laptop', 'Notebook', 'Wi-Fi', 'WiFi', 'AI', 'Robot', 
+    'Humanoid', 'Display', 'OLED', 'HBM', 'Chip', 'Semiconductor', 
+    'Battery', 'EV', 'Smart', 'Innovation', 'Samsung', 'LG', 'SK'
+]
 
-def analyze_news(news_list):
-    results = []
-    for item in news_list:
-        title = item['title']
-        summary = item.get('summary', '') or ''
-        link = item.get('link', item.get('original_link', ''))
-        published = item.get('published', '')
+def load_news():
+    """수집된 뉴스 파일(breaking_news.json)을 읽어옵니다."""
+    filename = 'breaking_news.json'
+    if not os.path.exists(filename):
+        print(f"❌ [오류] '{filename}' 파일이 없습니다. 먼저 뉴스를 수집해주세요.")
+        return []
+    
+    with open(filename, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        # collector.py 버전에 따라 포맷이 다를 수 있어 유연하게 처리
+        return data.get('articles', data) if isinstance(data, dict) else data
 
-        # 신기술/IT 키워드 체크 (강제 포함 여부 판단)
-        tech_keywords = ['ces', 'laptop', 'notebook', 'wi-fi', 'wifi', 'ai', 'artificial intelligence',
-                         'robot', 'humanoid', 'display', 'oled', 'micro led', 'hbm', 'chip', 'semiconductor',
-                         'battery', 'ev', 'smart', 'gadget', 'tech', 'innovation', 'product launch']
-        content_lower = (title + " " + summary).lower()
-        is_tech_news = any(kw in content_lower for kw in tech_keywords)
+def analyze_news_with_gemini(articles):
+    """Gemini 1.5 Pro에게 뉴스를 분석시킵니다."""
+    if not articles:
+        return []
 
-        prompt = f"""
-다음 해외 뉴스를 한국 주식 시장 투자자 관점에서 분석하세요. **사실에 기반해서만 답변하고, 추측이나 가짜 정보는 절대 만들지 마세요. 뉴스 내용의 행간을 잘 파악하여 잠재적 파급효과를 고려해서 분석하세요.**
+    print(f"[{datetime.datetime.now()}] 🧠 Gemini 1.5 Pro 분석 엔진 가동... (뉴스 {len(articles)}건)")
+    
+    genai.configure(api_key=API_KEY)
+    
+    # ---------------------------------------------------------
+    # [모델 선택] 보스, 여기서 모델을 변경할 수 있습니다.
+    # 안정성 추천: 'gemini-1.5-pro-latest'
+    # 최신 성능(만약 가능하면): 'gemini-3.0-pro-latest' 또는 'gemini-experimental'
+    # ---------------------------------------------------------
+    model_name = 'gemini-1.5-pro-latest' 
+    model = genai.GenerativeModel(model_name)
 
-제목: {title}
-요약: {summary}
+    # 뉴스 데이터를 텍스트로 변환
+    news_content = json.dumps(articles, ensure_ascii=False)
+    
+    # 보스의 지시사항(프롬프트)을 AI에게 입력
+    prompt = f"""
+    You are the Chief Investment Strategist for 'Global Stock Now'.
+    Analyze the following global news and identify its impact on the **South Korean Stock Market**.
 
-특별 규칙:
-- CES, 노트북, Wi-Fi, AI, 로봇, 반도체, 디스플레이, 배터리, 인공 피부 등 **신기술/IT 신상품 관련 뉴스**는 영향도가 0점이라도 반드시 결과에 포함하세요 (한국 기업 잠재 수혜/경쟁 가능성 때문).
-- 정치·지정학 뉴스는 영향도 0~3점으로 엄격히 판단.
-- 경제·기술 뉴스만 영향도 7점 이상 부여 가능.
+    [INPUT NEWS DATA]
+    {news_content}
 
-1. 한국 시장 영향도: 0~10점 (0점: 무관 또는 영향 미미)
-2. 영향 받는 한국 종목: 뉴스에 직접 관련된 종목만 나열 (없으면 빈 목록)
-3. 이유: 한글로 1~2문장, 뉴스에 나온 사실과 행간/파급효과 기반으로 설명
+    [MANDATORY RULES]
+    1. **Tech & IT Focus**: If a news item contains keywords like {TECH_KEYWORDS}, you MUST include it in the output, even if the immediate impact is low (score 3-6).
+    2. **Impact Score (0-10)**:
+       - 10: Market crash/boom imminent.
+       - 7-9: Strong impact on major Korean stocks (Samsung, LG, SK, etc.).
+       - Below 7: Filter out ONLY IF it is NOT a Tech/IT news.
+    3. **Logic**: Connect the dots. (e.g., Apple's new feature -> LG Innotek benefit?)
+    4. **Language**: Output strictly in **KOREAN**.
 
-반드시 이 JSON 형식으로만 출력:
-{{
-  "title": "{title}",
-  "impact_score": 점수,
-  "korean_stocks": ["종목1", "종목2"],
-  "reason": "상세 이유 한글 설명"
-}}
-"""
+    [OUTPUT FORMAT]
+    Return a JSON list of objects.
+    [
+        {{
+            "title": "Korean Title (Catchy)",
+            "original_title": "Original English Title",
+            "impact_score": 8.5,
+            "related_stocks": ["Samsung Electronics", "LG Energy Solution"],
+            "analysis": "Reason why this matters to Korea (2-3 sentences).",
+            "is_tech_news": true/false
+        }}
+    ]
+    """
 
-        inputs = tokenizer(prompt, return_tensors="pt")
+    try:
+        # 안전 설정 해제 (금융 분석이므로)
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
 
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=300,
-                temperature=0.4,  # 파급효과 분석 위해 약간 높임
-                top_p=0.95,
-                do_sample=True
-            )
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        
+        # JSON 정제 (마크다운 코드블록 제거)
+        raw_text = response.text
+        if "```json" in raw_text:
+            raw_text = raw_text.split("```json")[1].split("```")[0]
+        elif "```" in raw_text:
+            raw_text = raw_text.split("```")[1].split("```")[0]
+            
+        analyzed_data = json.loads(raw_text.strip())
+        print(f"✅ 분석 완료: {len(analyzed_data)}개의 유의미한 리포트 생성 (Model: {model_name})")
+        return analyzed_data
 
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-        response = response[len(prompt):].strip()  # 프롬프트 제거
+    except Exception as e:
+        print(f"❌ Gemini 분석 중 오류 발생: {e}")
+        return []
 
-        try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            json_str = response[start:end]
-            analyzed = json.loads(json_str)
-        except Exception as e:
-            print(f"JSON 파싱 실패 ({title}): {e}")
-            analyzed = {
-                "title": title,
-                "impact_score": 0 if not is_tech_news else 3,  # 기술 뉴스는 최소 3점 보장
-                "korean_stocks": [],
-                "reason": "신기술/IT 관련 뉴스로 잠재 영향 가능성 있으나 직접적 언급 없음." if is_tech_news else "한국 주식 시장에 직접적인 영향이 없는 뉴스입니다."
-            }
-
-        analyzed["original_link"] = link
-        analyzed["published"] = published
-        results.append(analyzed)
-
-    return results
+def save_result(analyzed_list):
+    """결과를 파일로 저장합니다."""
+    filename = "analyzed_news.json"
+    
+    final_data = {
+        "analyzed_at": str(datetime.datetime.now()),
+        "count": len(analyzed_list),
+        "reports": analyzed_list
+    }
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(final_data, f, ensure_ascii=False, indent=4)
+    print(f"💾 리포트 저장 완료: {filename}")
 
 if __name__ == "__main__":
-    try:
-        with open('breaking_news.json', 'r', encoding='utf-8') as f:
-            news_data = json.load(f)
-    except FileNotFoundError:
-        news_data = []
-        print("breaking_news.json 파일 없음")
-
-    if not news_data:
-        print("분석할 뉴스 없음")
-        analyzed_data = []
+    # 1. 뉴스 로드
+    raw_news = load_news()
+    
+    # 2. AI 분석
+    if raw_news:
+        reports = analyze_news_with_gemini(raw_news)
+        # 3. 저장
+        save_result(reports)
     else:
-        analyzed_data = analyze_news(news_data)
-
-    with open('analyzed_news.json', 'w', encoding='utf-8') as f:
-        json.dump(analyzed_data, f, indent=2, ensure_ascii=False)
-
-    print(f"AI 분석 완료 - {len(analyzed_data)}개 뉴스 처리 → analyzed_news.json 저장")
+        print("분석할 뉴스가 없습니다.")
