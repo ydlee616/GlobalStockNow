@@ -1,75 +1,55 @@
 name: GlobalStockNow AI Pipeline
 
 on:
-  workflow_dispatch:      # 수동 실행 버튼
+  workflow_dispatch:  # 수동 실행 버튼
   schedule:
-    - cron: '0 */4 * * *' # 매 4시간마다 자동 실행 (UTC 기준)
+    - cron: '0 22 * * *'  # 매일 밤 10시 (UTC 기준, 한국 오전 7시)
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     
     steps:
-      # 1. 코드 가져오기
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    # 1. 코드 가져오기
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      # 2. 파이썬 환경 설정
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    # 2. 파이썬 설치
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      # 3. 필수 도구 설치 (requirements.txt 활용)
-      - name: Install Dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+    # 3. 라이브러리 설치 (requirements.txt 사용)
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      # 4. 뉴스 수집 (Gemini 검색)
-      - name: 1단계 - 속보 수집 (Collector)
-        env:
-          # 소스코드에 키가 있지만, 혹시 모를 환경변수 참조를 위해 남겨둠 (선택사항)
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }} 
-        run: |
-          python collector.py
+    # 4. 뉴스 수집 실행 (collector.py)
+    - name: Run News Collector
+      run: python collector.py
 
-      # 5. 수집 결과 백업 (선택사항)
-      - name: 수집 데이터 저장 (Artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: raw-news-data-${{ github.run_number }}
-          path: breaking_news.json
-          retention-days: 3
+    # 5. AI 분석 실행 (analyzer.py) - 여기가 가장 중요합니다!
+    - name: Run AI Analyzer
+      env:
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      # 🔥 반드시 우리가 수정한 파일명(analyzer.py)과 일치해야 합니다.
+      run: python analyzer.py
 
-      # 6. AI 분석 (Gemini 1.5 Pro)
-      - name: 2단계 - 심층 분석 (Analyzer)
-        run: |
-          python analyzer.py
+    # 6. 결과 파일 업로드 (디버깅용)
+    - name: Upload Raw Data
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: raw-news-data-${{ github.run_number }}
+        path: breaking_news.json
 
-      # 7. 분석 결과 백업
-      - name: 분석 리포트 저장 (Artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-analysis-report-${{ github.run_number }}
-          path: analyzed_news.json
-          retention-days: 3
-
-      # 8. 텔레그램 알림 발송
-      - name: 3단계 - 텔레그램 브리핑
-        if: always() # 앞 단계가 실패해도 알림 시도
-        run: |
-          # analyzed_news.json에서 필요한 정보만 뽑아서 메시지 만들기
-          # jq를 사용하여 JSON 파싱 (새로운 포맷인 .reports[] 구조 대응)
-          
-          REPORT_CONTENT=$(jq -r '.reports[] | "🚨 <b>\(.title)</b>%0A(Impact: \(.impact_score)/10)%0A📊 관련종목: \(.related_stocks | join(", "))%0A💡 분석: \(.analysis)%0A%0A"' analyzed_news.json 2>/dev/null)
-          
-          if [ -z "$REPORT_CONTENT" ]; then
-            REPORT_CONTENT="✅ 현재 영향도 7.0 이상의 특이사항 뉴스 없음."
-          fi
-
-          # 텔레그램 API 전송
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
-            -d parse_mode=HTML \
-            -d text="<b>🌍 GlobalStockNow AI 브리핑</b>%0A%0A$REPORT_CONTENT"
+    - name: Upload Analysis Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ai-analysis-report-${{ github.run_number }}
+        path: analyzed_news.json
