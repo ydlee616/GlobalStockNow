@@ -27,30 +27,34 @@ def collect_news_from_ddg():
     all_news = []
     seen_urls = set() # 중복 제거용
 
+    # 객체 생성 방식을 최신 라이브러리에 맞춤
     with DDGS() as ddgs:
         for keyword in SEARCH_KEYWORDS:
             try:
                 print(f"   🔎 검색 중: '{keyword}'...")
                 # timelimit='d': 지난 1일(24시간) 이내 뉴스만 검색
-                # max_results=5: 키워드당 5개씩만 (너무 많으면 AI가 체함)
+                # max_results=5: 키워드당 5개씩만
                 results = ddgs.news(keywords=keyword, region="wt-wt", safesearch="off", timelimit="d", max_results=5)
                 
-                for r in results:
-                    # 중복 기사 제거
-                    if r['url'] in seen_urls:
-                        continue
-                    
-                    seen_urls.add(r['url'])
-                    
-                    # 데이터 표준화
-                    news_item = {
-                        "source": r.get('source', 'Unknown'),
-                        "title": r.get('title', ''),
-                        "link": r.get('url', ''),
-                        "published_at": r.get('date', str(datetime.datetime.now())),
-                        "summary": r.get('body', '')  # 검색 결과의 짧은 요약
-                    }
-                    all_news.append(news_item)
+                if results:
+                    for r in results:
+                        # 중복 기사 제거
+                        if r['url'] in seen_urls:
+                            continue
+                        
+                        seen_urls.add(r['url'])
+                        
+                        # 데이터 표준화
+                        news_item = {
+                            "source": r.get('source', 'Unknown'),
+                            "title": r.get('title', ''),
+                            "link": r.get('url', ''),
+                            "published_at": r.get('date', str(datetime.datetime.now())),
+                            "summary": r.get('body', '')  # 검색 결과의 짧은 요약
+                        }
+                        all_news.append(news_item)
+                else:
+                    print(f"      -> '{keyword}' 관련 최신 뉴스 없음")
                     
             except Exception as e:
                 print(f"   ⚠️ 키워드 '{keyword}' 검색 중 오류: {e}")
