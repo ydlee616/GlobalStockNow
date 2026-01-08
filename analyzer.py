@@ -2,6 +2,7 @@ import json
 import time
 import requests
 import os
+import sys  # 시스템 종료를 위해 추가
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from datetime import datetime
@@ -14,23 +15,32 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 RUN_NUMBER = os.environ.get("GITHUB_RUN_NUMBER", "Local")
 
-# 영향도 기준 (무조건 나오게 2.0으로 낮춤)
 IMPACT_THRESHOLD = 2.0
-
 INPUT_FILE = 'breaking_news.json'
 OUTPUT_FILE = 'analyzed_news.json'
 
-# Gemini 설정
-if GOOGLE_API_KEY:
+# ==========================================
+# 0. 초기화 및 안전장치 (가장 중요!)
+# ==========================================
+def init_model():
+    if not GOOGLE_API_KEY:
+        error_msg = "❌ FATAL: GOOGLE_API_KEY가 설정되지 않았습니다. Secrets를 확인하세요."
+        print(error_msg)
+        # 텔레그램으로 경고 보내고 스크립트 강제 종료
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [System Alert #{RUN_NUMBER}] {error_msg}"}
+            )
+        sys.exit(1) # 여기서 프로그램 종료!
+
     genai.configure(api_key=GOOGLE_API_KEY)
     
-    # 🔥 [핵심 1] JSON 강제 모드
     generation_config = {
         "temperature": 1,
         "response_mime_type": "application/json",
     }
     
-    # 🔥 [핵심 2] 안전장치 해제 (뉴스 분석 시 차단 방지)
     safety_settings = {
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -38,13 +48,14 @@ if GOOGLE_API_KEY:
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
     }
     
-    model = genai.GenerativeModel(
+    return genai.GenerativeModel(
         'gemini-1.5-flash', 
         generation_config=generation_config,
         safety_settings=safety_settings
     )
-else:
-    print("❌ Error: GOOGLE_API_KEY가 없습니다.")
+
+# 전역 모델 생성 (여기서 실패하면 바로 종료됨)
+model = init_model()
 
 # ==========================================
 # 1. 뉴스 분석 함수
@@ -74,9 +85,9 @@ def analyze_news_batch(articles):
         """
 
         try:
+            # model은 이미 위에서 초기화되었음이 보장됨
             response = model.generate_content(prompt)
             
-            # JSON 파싱
             batch_result = json.loads(response.text)
             
             if isinstance(batch_result, list):
@@ -91,14 +102,13 @@ def analyze_news_batch(articles):
             
         except Exception as e:
             print(f"⚠️ Error in batch {i}: {e}")
-            # 에러 발생 시 텔레그램으로 로그 전송 (디버깅용)
             send_error_log(f"Batch {i} Error: {str(e)}")
             continue
 
     return results
 
 # ==========================================
-# 2. 에러 로그 전송 (텔레그램)
+# 2. 에러 로그 전송
 # ==========================================
 def send_error_log(error_msg):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -111,7 +121,6 @@ def send_error_log(error_msg):
 # 3. 결과 저장 및 전송
 # ==========================================
 def save_and_notify(data):
-    # 파일 저장
     output_data = {
         "analyzed_at": str(datetime.now()),
         "run_number": RUN_NUMBER,
@@ -123,28 +132,22 @@ def save_and_notify(data):
     
     print(f"✅ 분석 완료! 총 {len(data)}건 저장됨.")
 
-    # 텔레그램 전송
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
 
-    # 점수 필터링
     important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
     important_news.sort(key=lambda x: x.get('score', 0), reverse=True)
     top_news = important_news[:5]
 
-    # 분석 결과가 0건이면 에러 메시지 전송
     if len(data) == 0:
-        msg = f"🚫 **[GlobalStockNow #{RUN_NUMBER}] 분석 실패**\n\n"
-        msg += "AI가 데이터를 반환하지 않았습니다. 로그를 확인하세요."
+        msg = f"🚫 **[GlobalStockNow #{RUN_NUMBER}] 분석 데이터 없음**\nAI 응답이 비어있습니다."
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
         return
 
-    # 중요 뉴스가 없을 때
     if not top_news:
         msg = f"📉 **[GlobalStockNow #{RUN_NUMBER}]**\n특이사항 없음 (모든 뉴스 {IMPACT_THRESHOLD}점 미만)"
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
         return
 
-    # 정상 전송
     msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(기준: {IMPACT_THRESHOLD}점 이상)\n\n"
     for item in top_news:
         score = item.get('score', 0)
