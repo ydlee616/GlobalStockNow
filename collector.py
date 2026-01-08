@@ -1,93 +1,63 @@
 #!/usr/bin/env python3
-# GlobalStockNow Smart Collector v5.0 (Powered by Gemini)
+# GlobalStockNow Collector v6.0 (DuckDuckGo Search Edition)
 # 작성일: 2026.01.09
-# 기능: 제미나이 그라운딩(검색)을 통해 차단 없이 최신 속보 수집
+# 기능: AI 의존 없이 검색엔진에서 직접 최신 뉴스 링크를 긁어옴 (수집 실패율 0% 도전)
 
-import os
 import json
 import datetime
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import time
+from duckduckgo_search import DDGS
 
 # ---------------------------------------------------------
-# [설정] 여기에 Google AI Studio에서 받은 API KEY를 넣으세요
+# [설정] 검색할 키워드 리스트 (영어/한국어 혼합)
 # ---------------------------------------------------------
-API_KEY = "AIzaSyAZo0o_Sq6ojtLnbmJ5mjqCelKFuBw15dY" 
+SEARCH_KEYWORDS = [
+    "Samsung Electronics stock news",
+    "SK Hynix HBM market share",
+    "Global AI semiconductor trends",
+    "NVIDIA vs competitors news",
+    "Tesla EV sales impact Korea",
+    "US Fed interest rate decision effect",
+    "CES 2026 Samsung LG news"
+]
 
-# 검색할 핵심 키워드 (보스의 의도 반영)
-SEARCH_QUERY = """
-Find the latest news and breaking stories about:
-1. CES 2026 (Focus on Samsung, LG, SK Hynix, Hyundai)
-2. Global Tech Trends (AI Agents, HBM, 6G, Robot)
-3. Impact on Korean Stock Market
-
-Condition:
-- Must be within the last 24 hours.
-- Focus on factual announcements and stock market impact.
-"""
-
-def get_smart_news():
-    print(f"[{datetime.datetime.now()}] Gemini 검색 엔진 가동 중... (차단 우회)")
+def collect_news_from_ddg():
+    print(f"[{datetime.datetime.now()}] 🦆 DuckDuckGo 검색 엔진 가동...")
     
-    try:
-        genai.configure(api_key=API_KEY)
-        
-        # 최신 정보를 검색할 수 있는 모델 설정 (Gemini 1.5 Flash 권장 - 빠름)
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        
-        # 검색 도구(Grounding)를 활성화하여 최신 정보 요청
-        # tools='google_search_retrieval' 기능 활용 (코드 레벨 예시)
-        # *참고: 현재 라이브러리 버전에 따라 tools 설정이 다를 수 있어, 
-        # 가장 확실한 프롬프트 엔지니어링 방식으로 구현합니다.
-        
-        prompt = f"""
-        You are a professional news collector for 'Global Stock Now'.
-        Perfrom a Google Search internally to answer this.
-        
-        {SEARCH_QUERY}
+    all_news = []
+    seen_urls = set() # 중복 제거용
 
-        [OUTPUT FORMAT]
-        Provide the result strictly as a JSON list of objects. Do not use Markdown code blocks.
-        Format:
-        [
-            {{
-                "source": "News Source Name",
-                "title": "Headline of the news",
-                "link": "URL if available, else Source Name",
-                "published_at": "Time or Date",
-                "summary": "1 sentence summary focusing on investment impact"
-            }},
-            ...
-        ]
-        """
+    with DDGS() as ddgs:
+        for keyword in SEARCH_KEYWORDS:
+            try:
+                print(f"   🔎 검색 중: '{keyword}'...")
+                # timelimit='d': 지난 1일(24시간) 이내 뉴스만 검색
+                # max_results=5: 키워드당 5개씩만 (너무 많으면 AI가 체함)
+                results = ddgs.news(keywords=keyword, region="wt-wt", safesearch="off", timelimit="d", max_results=5)
+                
+                for r in results:
+                    # 중복 기사 제거
+                    if r['url'] in seen_urls:
+                        continue
+                    
+                    seen_urls.add(r['url'])
+                    
+                    # 데이터 표준화
+                    news_item = {
+                        "source": r.get('source', 'Unknown'),
+                        "title": r.get('title', ''),
+                        "link": r.get('url', ''),
+                        "published_at": r.get('date', str(datetime.datetime.now())),
+                        "summary": r.get('body', '')  # 검색 결과의 짧은 요약
+                    }
+                    all_news.append(news_item)
+                    
+            except Exception as e:
+                print(f"   ⚠️ 키워드 '{keyword}' 검색 중 오류: {e}")
+                time.sleep(1) # 차단 방지용 잠시 대기
 
-        # 안전 설정 (모든 뉴스 수집 허용)
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
-        # 생성 요청 (검색 기능이 내장된 모델 활용)
-        response = model.generate_content(prompt, safety_settings=safety_settings)
-        
-        # 응답 텍스트에서 JSON 추출 (가끔 마크다운이 섞일 수 있어 정제)
-        raw_text = response.text
-        if "```json" in raw_text:
-            raw_text = raw_text.split("```json")[1].split("```")[0]
-        elif "```" in raw_text:
-            raw_text = raw_text.split("```")[1].split("```")[0]
-            
-        news_data = json.loads(raw_text.strip())
-        
-        print(f"✅ 수집 성공: {len(news_data)}개의 핵심 뉴스 확보")
-        return news_data
-
-    except Exception as e:
-        print(f"❌ 수집 중 오류 발생: {e}")
-        # 오류 시 빈 리스트 반환하여 파이프라인 멈춤 방지
-        return []
+    print(f"✅ 총 {len(all_news)}개의 최신 속보를 확보했습니다.")
+    return all_news
 
 def save_to_json(news_list):
     filename = "breaking_news.json"
@@ -99,16 +69,15 @@ def save_to_json(news_list):
     
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"💾 저장 완료: {filename}")
+    print(f"💾 저장 완료: {filename} ({len(news_list)}건)")
 
-# [collector.py의 맨 아래 부분을 이걸로 교체하세요]
 if __name__ == "__main__":
-    # 1. 뉴스 수집 시도
-    articles = get_smart_news()
+    # 1. 뉴스 강제 수집
+    articles = collect_news_from_ddg()
     
-    # 2. 결과 저장 (뉴스가 없어도 빈 파일 [] 생성)
+    # 2. 결과 저장 (없으면 빈 리스트라도 저장)
     if not articles:
-        print("⚠️ 수집된 뉴스가 없습니다. 빈 리스트를 저장합니다.")
+        print("⚠️ 검색 결과가 없습니다. (검색어 조정 필요)")
         articles = []
         
     save_to_json(articles)
