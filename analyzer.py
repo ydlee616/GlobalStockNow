@@ -1,141 +1,141 @@
-#!/usr/bin/env python3
-# GlobalStockNow Analyzer v5.1 (Final Stable)
-# 작성일: 2026.01.09
-# 기능: 수집된 속보를 Gemini Pro로 정밀 분석 (오류 방지 및 IT 강제 포함 로직 적용)
-
 import json
+import time
+import requests
 import os
-import datetime
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from datetime import datetime
 
-# ---------------------------------------------------------
-# [설정] API KEY
-# ---------------------------------------------------------
-API_KEY = "AIzaSyAZo0o_Sq6ojtLnbmJ5mjqCelKFuBw15dY"
+# ==========================================
+# [설정 영역] GitHub Secrets에서 키를 가져옵니다.
+# ==========================================
+# 주의: 코드를 수정할 필요 없이, GitHub Settings > Secrets에 키를 등록해야 합니다.
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# 보스가 지정한 '무조건 살려야 하는' 키워드 목록
-TECH_KEYWORDS = [
-    'CES', 'Laptop', 'Notebook', 'Wi-Fi', 'WiFi', 'AI', 'Robot', 
-    'Humanoid', 'Display', 'OLED', 'HBM', 'Chip', 'Semiconductor', 
-    'Battery', 'EV', 'Smart', 'Innovation', 'Samsung', 'LG', 'SK'
-]
+# 파일 경로 (리포지토리 구조에 맞춤)
+INPUT_FILE = 'breaking_news.json'
+OUTPUT_FILE = 'analyzed_news.json'
 
-# [analyzer.py의 load_news 함수를 이걸로 교체하세요]
-def load_news():
-    """수집된 뉴스 파일(breaking_news.json)을 읽어옵니다."""
-    filename = 'breaking_news.json'
+# Gemini 설정
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    print("❌ Error: GOOGLE_API_KEY가 설정되지 않았습니다. GitHub Secrets를 확인하세요.")
+    exit(1)
+
+# ==========================================
+# 1. 뉴스 분석 함수 (배치 처리 적용 - 5개씩)
+# ==========================================
+def analyze_news_batch(articles):
+    results = []
+    batch_size = 5
     
-    # 파일이 아예 없으면 빈 리스트 반환 (에러 방지)
-    if not os.path.exists(filename):
-        print(f"⚠️ '{filename}' 파일이 없습니다. 빈 리스트로 진행합니다.")
-        return []
-    
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return data.get('articles', data) if isinstance(data, dict) else data
-    except Exception as e:
-        print(f"❌ 파일 읽기 오류: {e}")
-        return []
+    print(f"🔄 총 {len(articles)}개의 기사를 {batch_size}개씩 나누어 분석 시작...")
 
-def analyze_news_with_gemini(articles):
-    """Gemini 1.5 Pro에게 뉴스를 분석시킵니다."""
-    if not articles:
-        return []
-
-    print(f"[{datetime.datetime.now()}] 🧠 Gemini 1.5 Pro 분석 엔진 가동... (뉴스 {len(articles)}건)")
-    
-    genai.configure(api_key=API_KEY)
-    
-    # 모델 설정 (안정성: 1.5 Pro)
-    model_name = 'gemini-1.5-pro-latest' 
-    model = genai.GenerativeModel(model_name)
-
-    # 뉴스 데이터를 텍스트로 변환
-    news_content = json.dumps(articles, ensure_ascii=False)
-    
-    # 보스의 지시사항(프롬프트)을 AI에게 입력
-    prompt = f"""
-    You are the Chief Investment Strategist for 'Global Stock Now'.
-    Analyze the following global news and identify its impact on the **South Korean Stock Market**.
-
-    [INPUT NEWS DATA]
-    {news_content}
-
-    [MANDATORY RULES]
-    1. **Tech & IT Focus**: If a news item contains keywords like {TECH_KEYWORDS}, you MUST include it in the output, even if the immediate impact is low (score 3-6).
-    2. **Impact Score (0-10)**:
-       - 10: Market crash/boom imminent.
-       - 7-9: Strong impact on major Korean stocks (Samsung, LG, SK, etc.).
-       - Below 7: Filter out ONLY IF it is NOT a Tech/IT news.
-    3. **Logic**: Connect the dots. (e.g., Apple's new feature -> LG Innotek benefit?)
-    4. **Language**: Output strictly in **KOREAN**.
-
-    [OUTPUT FORMAT]
-    Return a JSON list of objects.
-    [
-        {{
-            "title": "Korean Title (Catchy)",
-            "original_title": "Original English Title",
-            "impact_score": 8.5,
-            "related_stocks": ["Samsung Electronics", "LG Energy Solution"],
-            "analysis": "Reason why this matters to Korea (2-3 sentences).",
-            "is_tech_news": true/false
-        }}
-    ]
-    """
-
-    try:
-        # 안전 설정 해제 (금융 분석이므로)
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
-        response = model.generate_content(prompt, safety_settings=safety_settings)
+    for i in range(0, len(articles), batch_size):
+        batch = articles[i:i + batch_size]
+        print(f"   Processing batch {i//batch_size + 1}...")
         
-        # JSON 정제
-        raw_text = response.text
-        if "```json" in raw_text:
-            raw_text = raw_text.split("```json")[1].split("```")[0]
-        elif "```" in raw_text:
-            raw_text = raw_text.split("```")[1].split("```")[0]
+        prompt = f"""
+        You are a professional stock market analyst.
+        Analyze the following news articles and extract key insights for investors.
+        
+        [Input Articles]:
+        {json.dumps(batch, ensure_ascii=False)}
+
+        [Requirement]:
+        Return the result ONLY in valid JSON format (list of objects).
+        Do not use markdown code blocks.
+        Each object must have:
+        - "title": A concise 1-line headline in Korean.
+        - "summary": A 2-sentence summary in Korean.
+        - "impact": "Positive", "Negative", or "Neutral".
+        - "related_stocks": List of related stock tickers or company names.
+        """
+
+        try:
+            response = model.generate_content(prompt)
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            batch_result = json.loads(clean_text)
             
-        analyzed_data = json.loads(raw_text.strip())
-        print(f"✅ 분석 완료: {len(analyzed_data)}개의 유의미한 리포트 생성")
-        return analyzed_data
+            if isinstance(batch_result, list):
+                results.extend(batch_result)
+            else:
+                results.append(batch_result)
+            time.sleep(1) # API 부하 방지
+        except Exception as e:
+            print(f"⚠️ Error in batch {i}: {e}")
+            continue
 
-    except Exception as e:
-        print(f"❌ Gemini 분석 중 오류 발생: {e}")
-        return []
+    return results
 
-def save_result(analyzed_list):
-    """결과를 파일로 저장합니다."""
-    filename = "analyzed_news.json"
-    
-    final_data = {
-        "analyzed_at": str(datetime.datetime.now()),
-        "count": len(analyzed_list),
-        "reports": analyzed_list
+# ==========================================
+# 2. 결과 저장 함수
+# ==========================================
+def save_results(data):
+    output_data = {
+        "analyzed_at": str(datetime.now()),
+        "count": len(data),
+        "reports": data
     }
+    # GitHub Action에서 파일 쓰기 권한이 있는지 확인 필요하지만, 기본적으로 생성됨
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        json.dump(output_data, f, ensure_ascii=False, indent=4)
     
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(final_data, f, ensure_ascii=False, indent=4)
-    print(f"💾 리포트 저장 완료: {filename}")
+    print(f"✅ 분석 완료! {OUTPUT_FILE} 저장됨. (총 {len(data)}건)")
+    return output_data
 
-# [analyzer.py의 맨 아래 부분을 이걸로 교체하세요]
+# ==========================================
+# 3. 텔레그램 전송 함수
+# ==========================================
+def send_telegram_report(analyzed_data):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ 텔레그램 설정이 없어 전송을 건너뜁니다.")
+        return
+
+    if not analyzed_data['reports']:
+        print("📭 전송할 분석 데이터가 없습니다.")
+        return
+
+    print("🚀 텔레그램 전송 시작...")
+    
+    top_reports = analyzed_data['reports'][:5] 
+    
+    message = f"📢 **[GlobalStockNow 브리핑]**\n({analyzed_data['analyzed_at'][:16]})\n\n"
+    
+    for item in top_reports:
+        icon = "🔥" if item.get('impact') == 'Positive' else "🔻" if item.get('impact') == 'Negative' else "➖"
+        message += f"{icon} **{item['title']}**\n"
+        message += f"└ {item['summary']}\n"
+        message += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
+    
+    message += f"👉 총 {analyzed_data['count']}건 분석 완료."
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    
+    try:
+        requests.post(url, data=payload)
+        print("✅ 텔레그램 메시지 전송 성공!")
+    except Exception as e:
+        print(f"❌ 텔레그램 전송 실패: {e}")
+
+# ==========================================
+# 메인 실행부
+# ==========================================
 if __name__ == "__main__":
-    # 1. 뉴스 로드
-    raw_news = load_news()
-    
-    # 2. AI 분석 (데이터가 없어도 실행해서 빈 파일 저장)
-    reports = []
-    if raw_news:
-        reports = analyze_news_with_gemini(raw_news)
+    if os.path.exists(INPUT_FILE):
+        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+            articles = raw_data.get('articles', [])
+            
+        if articles:
+            results = analyze_news_batch(articles)
+            final_data = save_results(results)
+            send_telegram_report(final_data)
+        else:
+            print("📭 뉴스 데이터가 비어 있습니다.")
     else:
-        print("분석할 뉴스 데이터가 없습니다.")
-
-    # 3. 결과 무조건 저장
-    save_result(reports)
+        print(f"❌ {INPUT_FILE} 파일을 찾을 수 없습니다. collector.py가 먼저 실행되어야 합니다.")
