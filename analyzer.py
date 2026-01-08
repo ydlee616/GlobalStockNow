@@ -3,6 +3,7 @@ import time
 import requests
 import os
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from datetime import datetime
 
 # ==========================================
@@ -13,26 +14,40 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 RUN_NUMBER = os.environ.get("GITHUB_RUN_NUMBER", "Local")
 
-# 영향도 기준 (3.0점)
-IMPACT_THRESHOLD = 3.0
+# 영향도 기준 (무조건 나오게 2.0으로 낮춤)
+IMPACT_THRESHOLD = 2.0
 
 INPUT_FILE = 'breaking_news.json'
 OUTPUT_FILE = 'analyzed_news.json'
 
-# Gemini 설정 (JSON 강제 모드 활성화)
+# Gemini 설정
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
-    # 🔥 핵심 변경: AI가 무조건 JSON만 뱉도록 설정
+    
+    # 🔥 [핵심 1] JSON 강제 모드
     generation_config = {
         "temperature": 1,
         "response_mime_type": "application/json",
     }
-    model = genai.GenerativeModel('gemini-1.5-flash', generation_config=generation_config)
+    
+    # 🔥 [핵심 2] 안전장치 해제 (뉴스 분석 시 차단 방지)
+    safety_settings = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+    }
+    
+    model = genai.GenerativeModel(
+        'gemini-1.5-flash', 
+        generation_config=generation_config,
+        safety_settings=safety_settings
+    )
 else:
     print("❌ Error: GOOGLE_API_KEY가 없습니다.")
 
 # ==========================================
-# 1. 뉴스 분석 함수 (JSON Mode)
+# 1. 뉴스 분석 함수
 # ==========================================
 def analyze_news_batch(articles):
     results = []
@@ -44,37 +59,29 @@ def analyze_news_batch(articles):
         batch = articles[i:i + batch_size]
         print(f"   Processing batch {i//batch_size + 1}...")
         
-        # 프롬프트: JSON 스키마를 명확히 제시
         prompt = f"""
-        You are a stock market analyst. 
-        Analyze these news articles. Even minor news should be scored.
+        You are a financial analyst. Analyze these news articles.
+        MUST output a JSON list.
         
         [Articles]:
         {json.dumps(batch, ensure_ascii=False)}
 
-        [Requirement]:
-        Output a JSON List of objects. 
-        Key fields:
-        - title (Korean)
-        - summary (Korean, 1 sentence)
-        - score (Float 0.0-10.0)
+        [Fields Required]:
+        - title (Korean summary title)
+        - summary (Korean 1 sentence)
+        - score (Float 0.0-10.0 impact score)
         - related_stocks (List of strings)
         """
 
         try:
             response = model.generate_content(prompt)
             
-            # 🔥 디버깅용 로그 (혹시 실패하면 로그에서 확인 가능)
-            # print(f"DEBUG Response: {response.text[:100]}...") 
-
-            # JSON 모드이므로 바로 로드 가능
+            # JSON 파싱
             batch_result = json.loads(response.text)
             
-            # 리스트인지 단일 객체인지 확인 후 병합
             if isinstance(batch_result, list):
                 results.extend(batch_result)
             elif isinstance(batch_result, dict):
-                # 가끔 최상위 키로 감싸는 경우가 있음
                 if 'articles' in batch_result:
                     results.extend(batch_result['articles'])
                 else:
@@ -84,83 +91,69 @@ def analyze_news_batch(articles):
             
         except Exception as e:
             print(f"⚠️ Error in batch {i}: {e}")
-            # 에러 발생 시 원본 텍스트 출력하여 디버깅 도움
-            try:
-                print(f"Fail context: {response.text}")
-            except:
-                pass
+            # 에러 발생 시 텔레그램으로 로그 전송 (디버깅용)
+            send_error_log(f"Batch {i} Error: {str(e)}")
             continue
 
     return results
 
 # ==========================================
-# 2. 결과 저장 함수
+# 2. 에러 로그 전송 (텔레그램)
 # ==========================================
-def save_results(data):
+def send_error_log(error_msg):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+        data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [Error #{RUN_NUMBER}] {error_msg}"}
+    )
+
+# ==========================================
+# 3. 결과 저장 및 전송
+# ==========================================
+def save_and_notify(data):
+    # 파일 저장
     output_data = {
         "analyzed_at": str(datetime.now()),
         "run_number": RUN_NUMBER,
         "count": len(data),
         "reports": data
     }
-    
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(output_data, f, ensure_ascii=False, indent=4)
     
-    print(f"✅ 분석 완료! 총 {len(data)}건 저장됨. (Run #{RUN_NUMBER})")
-    return output_data
+    print(f"✅ 분석 완료! 총 {len(data)}건 저장됨.")
 
-# ==========================================
-# 3. 텔레그램 전송 함수
-# ==========================================
-def send_telegram_report(analyzed_data):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
+    # 텔레그램 전송
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
 
-    reports = analyzed_data.get('reports', [])
-    
     # 점수 필터링
-    important_news = [
-        r for r in reports 
-        if float(r.get('score', 0)) >= IMPACT_THRESHOLD
-    ]
-    
+    important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
     important_news.sort(key=lambda x: x.get('score', 0), reverse=True)
     top_news = important_news[:5]
 
-    # [케이스 1] 분석된 중요 뉴스가 없을 때
-    if not top_news:
-        message = f"📢 **[GlobalStockNow AI 브리핑 (#{RUN_NUMBER})]**\n\n"
-        message += f"특이사항 없음 (모든 뉴스 점수 {IMPACT_THRESHOLD} 미만)\n"
-        message += f"확인된 뉴스: {len(reports)}건"
-        
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      data={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
+    # 분석 결과가 0건이면 에러 메시지 전송
+    if len(data) == 0:
+        msg = f"🚫 **[GlobalStockNow #{RUN_NUMBER}] 분석 실패**\n\n"
+        msg += "AI가 데이터를 반환하지 않았습니다. 로그를 확인하세요."
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
         return
 
-    # [케이스 2] 중요 뉴스가 있을 때
-    print(f"🚀 중요 뉴스 {len(top_news)}건 전송 시작...")
-    
-    message = f"📢 **[GlobalStockNow AI 브리핑 (#{RUN_NUMBER})]**\n"
-    message += f"기준: 영향도 {IMPACT_THRESHOLD} 이상\n\n"
-    
+    # 중요 뉴스가 없을 때
+    if not top_news:
+        msg = f"📉 **[GlobalStockNow #{RUN_NUMBER}]**\n특이사항 없음 (모든 뉴스 {IMPACT_THRESHOLD}점 미만)"
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+        return
+
+    # 정상 전송
+    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(기준: {IMPACT_THRESHOLD}점 이상)\n\n"
     for item in top_news:
         score = item.get('score', 0)
-        # 이모지 로직
-        icon = "🔥" if score >= 8.0 else "⚡" if score >= 5.0 else "👀"
-        
-        message += f"{icon} **{item.get('title', '제목 없음')}** (점수: {score})\n"
-        message += f"└ {item.get('summary', '요약 없음')}\n"
-        message += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
+        icon = "🔥" if score >= 7.0 else "⚡"
+        msg += f"{icon} **{item.get('title')}** ({score}점)\n"
+        msg += f"└ {item.get('summary')}\n"
+        msg += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
     
-    # 텔레그램 메시지 길이 제한 방지 (4096자)
-    if len(message) > 4000:
-        message = message[:4000] + "\n...(내용 잘림)..."
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    
-    requests.post(url, data=payload)
+    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
 # ==========================================
 # 메인 실행부
@@ -173,9 +166,8 @@ if __name__ == "__main__":
             
         if articles:
             results = analyze_news_batch(articles)
-            final_data = save_results(results)
-            send_telegram_report(final_data)
+            save_and_notify(results)
         else:
-            print("📭 뉴스 데이터가 비어 있습니다.")
+            print("📭 뉴스 데이터 없음")
     else:
-        print(f"❌ {INPUT_FILE} 파일을 찾을 수 없습니다.")
+        print(f"❌ {INPUT_FILE} 파일 없음")
