@@ -163,16 +163,26 @@ def save_and_notify(data):
     
     send_telegram_msg(msg)
 
+# analyzer.py의 맨 마지막 부분 (if __name__ == "__main__": 블록)을 이것으로 교체
+
 if __name__ == "__main__":
     if os.path.exists(INPUT_FILE):
         with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            raw_data = json.load(f)
-            articles = raw_data.get('articles', [])
-            
+            try:
+                raw_data = json.load(f)
+                articles = raw_data.get('articles', [])
+            except:
+                articles = []
+
         if articles:
             results = analyze_news_batch(articles)
             save_and_notify(results)
         else:
-            print("📭 뉴스 데이터 없음")
+            # 🔥 [수정] 뉴스가 0건일 때 텔레그램 알림 발송
+            print("📭 뉴스 데이터 없음 (0건 수집됨)")
+            error_msg = f"📉 **[GlobalStockNow #{RUN_NUMBER}] 수집 실패**\n\n"
+            error_msg += "수집된 뉴스가 0건입니다. 외부 사이트에서 봇을 차단했거나 검색 결과가 없습니다."
+            send_telegram_msg(error_msg)
     else:
         print(f"❌ {INPUT_FILE} 파일 없음")
+        send_telegram_msg(f"❌ [GlobalStockNow #{RUN_NUMBER}] 오류: 데이터 파일이 없습니다.")
