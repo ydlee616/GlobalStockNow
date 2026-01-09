@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-# GlobalStockNow Collector v6.0 (DuckDuckGo Search Edition)
-# 작성일: 2026.01.09
-# 기능: AI 의존 없이 검색엔진에서 직접 최신 뉴스 링크를 긁어옴 (수집 실패율 0% 도전)
-
+# GlobalStockNow Collector v6.1 (Anti-Block & Fallback Edition)
 import json
 import datetime
 import time
+import random
 from duckduckgo_search import DDGS
 
-# ---------------------------------------------------------
-# [설정] 검색할 키워드 리스트 (영어/한국어 혼합)
-# ---------------------------------------------------------
 SEARCH_KEYWORDS = [
     "Samsung Electronics stock news",
     "SK Hynix HBM market share",
@@ -22,45 +17,54 @@ SEARCH_KEYWORDS = [
 ]
 
 def collect_news_from_ddg():
-    print(f"[{datetime.datetime.now()}] 🦆 DuckDuckGo 검색 엔진 가동...")
+    print(f"[{datetime.datetime.now()}] 🦆 DuckDuckGo 검색 엔진 가동 (안전 모드)...")
     
     all_news = []
-    seen_urls = set() # 중복 제거용
+    seen_urls = set()
 
-    # 객체 생성 방식을 최신 라이브러리에 맞춤
     with DDGS() as ddgs:
         for keyword in SEARCH_KEYWORDS:
             try:
-                print(f"   🔎 검색 중: '{keyword}'...")
-                # timelimit='d': 지난 1일(24시간) 이내 뉴스만 검색
-                # max_results=5: 키워드당 5개씩만
-                results = ddgs.news(keywords=keyword, region="wt-wt", safesearch="off", timelimit="d", max_results=5)
+                print(f"   🔎 검색 시도: '{keyword}'...")
                 
+                # 1차 시도: 지난 24시간(d) 뉴스 검색
+                results = list(ddgs.news(keywords=keyword, region="wt-wt", safesearch="off", timelimit="d", max_results=5))
+                
+                # 2차 시도: 결과가 없으면 지난 1주일(w)로 범위 확장 (Fallback)
+                if not results:
+                    print(f"      👉 오늘 뉴스가 없어 '지난 주' 범위로 확장합니다.")
+                    time.sleep(2) # 잠시 대기
+                    results = list(ddgs.news(keywords=keyword, region="wt-wt", safesearch="off", timelimit="w", max_results=3))
+
                 if results:
+                    count = 0
                     for r in results:
-                        # 중복 기사 제거
-                        if r['url'] in seen_urls:
-                            continue
-                        
+                        if r['url'] in seen_urls: continue
                         seen_urls.add(r['url'])
                         
-                        # 데이터 표준화
                         news_item = {
                             "source": r.get('source', 'Unknown'),
                             "title": r.get('title', ''),
                             "link": r.get('url', ''),
                             "published_at": r.get('date', str(datetime.datetime.now())),
-                            "summary": r.get('body', '')  # 검색 결과의 짧은 요약
+                            "summary": r.get('body', '')
                         }
                         all_news.append(news_item)
+                        count += 1
+                    print(f"      ✅ {count}건 수집 완료")
                 else:
-                    print(f"      -> '{keyword}' 관련 최신 뉴스 없음")
-                    
-            except Exception as e:
-                print(f"   ⚠️ 키워드 '{keyword}' 검색 중 오류: {e}")
-                time.sleep(1) # 차단 방지용 잠시 대기
+                    print(f"      ❌ 확장 검색에도 결과 없음")
 
-    print(f"✅ 총 {len(all_news)}개의 최신 속보를 확보했습니다.")
+                # 🔥 핵심: 봇 차단 방지를 위한 랜덤 대기 (3~6초)
+                wait_time = random.uniform(3, 6)
+                print(f"      💤 {wait_time:.1f}초 대기...")
+                time.sleep(wait_time)
+
+            except Exception as e:
+                print(f"   ⚠️ 오류 발생: {e}")
+                time.sleep(5)
+
+    print(f"✅ 총 {len(all_news)}개의 뉴스를 확보했습니다.")
     return all_news
 
 def save_to_json(news_list):
@@ -70,18 +74,10 @@ def save_to_json(news_list):
         "count": len(news_list),
         "articles": news_list
     }
-    
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"💾 저장 완료: {filename} ({len(news_list)}건)")
+    print(f"💾 저장 완료: {filename}")
 
 if __name__ == "__main__":
-    # 1. 뉴스 강제 수집
     articles = collect_news_from_ddg()
-    
-    # 2. 결과 저장 (없으면 빈 리스트라도 저장)
-    if not articles:
-        print("⚠️ 검색 결과가 없습니다. (검색어 조정 필요)")
-        articles = []
-        
     save_to_json(articles)
