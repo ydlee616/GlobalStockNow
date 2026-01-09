@@ -31,111 +31,106 @@ def send_telegram_msg(message):
         print(f"⚠️ 텔레그램 전송 실패: {e}")
 
 # ==========================================
-# 1. 사용 가능한 모델 자동 찾기 (핵심 기능)
+# 1. 모델 자동 찾기
 # ==========================================
 def find_best_model():
     if not GOOGLE_API_KEY:
         print("❌ FATAL: API Key Missing")
         return None
 
-    # 모델 목록 조회 API 호출
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GOOGLE_API_KEY}"
     
     try:
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"❌ 모델 목록 조회 실패: {response.text}")
-            return "models/gemini-1.5-flash" # 실패 시 기본값 시도
+            return "models/gemini-1.5-flash"
 
         data = response.json()
         models = data.get('models', [])
         
-        # 우선순위: Flash -> Pro -> 1.0 Pro
+        # 1.5 Flash를 최우선으로 찾음 (속도/비용 최적)
         for m in models:
             name = m.get('name', '')
-            if 'gemini-1.5-flash' in name:
-                print(f"✅ Found Model: {name}")
-                return name
+            if 'gemini-1.5-flash' in name and 'latest' in name: return name
+        for m in models:
+            name = m.get('name', '')
+            if 'gemini-1.5-flash' in name: return name
         
+        # 없으면 Pro 모델 찾음
         for m in models:
             name = m.get('name', '')
-            if 'gemini-1.5-pro' in name:
-                print(f"✅ Found Model: {name}")
-                return name
-                
+            if 'gemini-1.5-pro' in name: return name
         for m in models:
             name = m.get('name', '')
-            if 'gemini-pro' in name:
-                print(f"✅ Found Model: {name}")
-                return name
+            if 'gemini-pro' in name: return name
 
-        # 아무것도 못 찾으면 기본값
-        print("⚠️ 적절한 모델을 못 찾음. 기본값 사용.")
         return "models/gemini-1.5-flash"
 
     except Exception as e:
-        print(f"❌ 모델 탐색 중 에러: {e}")
+        print(f"❌ 모델 탐색 에러: {e}")
         return "models/gemini-1.5-flash"
 
-# 전역 변수로 모델 이름 확정
 CURRENT_MODEL_NAME = find_best_model()
 
 # ==========================================
-# 2. Gemini API 호출 (Raw Mode)
+# 2. Gemini API 호출 (재시도 로직 포함)
 # ==========================================
 def call_gemini_raw(prompt):
     if not GOOGLE_API_KEY or not CURRENT_MODEL_NAME:
         return None
 
-    # 확정된 모델 이름으로 URL 구성
-    # CURRENT_MODEL_NAME은 'models/gemini-1.5-flash-001' 같은 형식이므로 바로 붙임
     url = f"https://generativelanguage.googleapis.com/v1beta/{CURRENT_MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
-    
     headers = {'Content-Type': 'application/json'}
-    full_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON array. No markdown code blocks."
     
+    full_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON array. No markdown code blocks."
     data = {
         "contents": [{"parts": [{"text": full_prompt}]}],
-        "generationConfig": {
-            "temperature": 1.0,
-            "responseMimeType": "application/json"
-        }
+        "generationConfig": {"temperature": 1.0, "responseMimeType": "application/json"}
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-        
-        if response.status_code != 200:
-            error_msg = f"API Error {response.status_code}: {response.text}"
-            print(f"❌ {error_msg}")
-            send_telegram_msg(f"⚠️ [Error #{RUN_NUMBER}] API 호출 실패 ({CURRENT_MODEL_NAME}):\n{response.text[:200]}")
-            return None
-
-        result_json = response.json()
-        # 응답 구조 파싱 (안전하게)
-        candidates = result_json.get('candidates', [])
-        if not candidates:
-            return None
+    # 🔥 [핵심] 재시도 로직 (Max 3회)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=30)
             
-        parts = candidates[0].get('content', {}).get('parts', [])
-        if not parts:
-            return None
+            # 성공 (200)
+            if response.status_code == 200:
+                result_json = response.json()
+                try:
+                    return result_json['candidates'][0]['content']['parts'][0]['text']
+                except (KeyError, IndexError):
+                    return None
             
-        return parts[0].get('text', '')
+            # 속도 위반 (429) -> 잠시 대기 후 재시도
+            elif response.status_code == 429:
+                wait_time = 20 * (attempt + 1) # 20초, 40초, 60초 늘려가며 대기
+                print(f"⏳ Quota Exceeded (429). Waiting {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+                continue # 다음 루프로 재시도
+            
+            # 기타 에러 -> 즉시 중단 말고 로그 찍고 종료
+            else:
+                print(f"❌ API Error {response.status_code}: {response.text[:100]}")
+                return None
 
-    except Exception as e:
-        print(f"❌ 통신 오류: {e}")
-        return None
+        except Exception as e:
+            print(f"❌ 통신 오류: {e}")
+            time.sleep(5)
+            continue
+            
+    print("❌ 모든 재시도 실패.")
+    return None
 
 # ==========================================
-# 3. 뉴스 분석 루프
+# 3. 뉴스 분석 루프 (배치 간격 증가)
 # ==========================================
 def analyze_news_batch(articles):
     results = []
     batch_size = 5
     
     print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: {CURRENT_MODEL_NAME})...")
-    
+
     for i in range(0, len(articles), batch_size):
         batch = articles[i:i + batch_size]
         print(f"   Processing batch {i//batch_size + 1}...")
@@ -168,9 +163,11 @@ def analyze_news_batch(articles):
                         results.append(batch_result)
             except json.JSONDecodeError:
                 print("⚠️ JSON 파싱 실패")
-                continue
         
-        time.sleep(1)
+        # 🔥 [핵심] 배치 사이 휴식 시간 대폭 증가 (Free Tier 보호)
+        # 기존 1초 -> 10초로 변경
+        print("   Cooling down for 10 seconds...")
+        time.sleep(10)
 
     return results
 
@@ -192,7 +189,7 @@ def save_and_notify(data):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
 
     if len(data) == 0:
-        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 데이터 0건. (모델: {CURRENT_MODEL_NAME})")
+        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 데이터 0건. (Quota 확인 필요)")
         return
 
     important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
