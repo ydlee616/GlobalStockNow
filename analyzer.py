@@ -13,13 +13,12 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 RUN_NUMBER = os.environ.get("GITHUB_RUN_NUMBER", "Local")
 
-# 영향도 기준 (2.0점 이상이면 전송)
 IMPACT_THRESHOLD = 2.0
 INPUT_FILE = 'breaking_news.json'
 OUTPUT_FILE = 'analyzed_news.json'
 
 # ==========================================
-# 0. 텔레그램 전송 헬퍼 함수
+# 0. 텔레그램 전송 헬퍼
 # ==========================================
 def send_telegram_msg(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -32,26 +31,74 @@ def send_telegram_msg(message):
         print(f"⚠️ 텔레그램 전송 실패: {e}")
 
 # ==========================================
-# 1. Gemini API 직접 호출 함수 (라이브러리 미사용)
+# 1. 사용 가능한 모델 자동 찾기 (핵심 기능)
 # ==========================================
-def call_gemini_raw(prompt):
+def find_best_model():
     if not GOOGLE_API_KEY:
         print("❌ FATAL: API Key Missing")
         return None
 
-    # Gemini 1.5 Flash 엔드포인트 (직접 호출)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
+    # 모델 목록 조회 API 호출
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GOOGLE_API_KEY}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"❌ 모델 목록 조회 실패: {response.text}")
+            return "models/gemini-1.5-flash" # 실패 시 기본값 시도
+
+        data = response.json()
+        models = data.get('models', [])
+        
+        # 우선순위: Flash -> Pro -> 1.0 Pro
+        for m in models:
+            name = m.get('name', '')
+            if 'gemini-1.5-flash' in name:
+                print(f"✅ Found Model: {name}")
+                return name
+        
+        for m in models:
+            name = m.get('name', '')
+            if 'gemini-1.5-pro' in name:
+                print(f"✅ Found Model: {name}")
+                return name
+                
+        for m in models:
+            name = m.get('name', '')
+            if 'gemini-pro' in name:
+                print(f"✅ Found Model: {name}")
+                return name
+
+        # 아무것도 못 찾으면 기본값
+        print("⚠️ 적절한 모델을 못 찾음. 기본값 사용.")
+        return "models/gemini-1.5-flash"
+
+    except Exception as e:
+        print(f"❌ 모델 탐색 중 에러: {e}")
+        return "models/gemini-1.5-flash"
+
+# 전역 변수로 모델 이름 확정
+CURRENT_MODEL_NAME = find_best_model()
+
+# ==========================================
+# 2. Gemini API 호출 (Raw Mode)
+# ==========================================
+def call_gemini_raw(prompt):
+    if not GOOGLE_API_KEY or not CURRENT_MODEL_NAME:
+        return None
+
+    # 확정된 모델 이름으로 URL 구성
+    # CURRENT_MODEL_NAME은 'models/gemini-1.5-flash-001' 같은 형식이므로 바로 붙임
+    url = f"https://generativelanguage.googleapis.com/v1beta/{CURRENT_MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
     
     headers = {'Content-Type': 'application/json'}
-    
-    # JSON 강제 출력을 위한 프롬프트 보강
     full_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON array. No markdown code blocks."
     
     data = {
         "contents": [{"parts": [{"text": full_prompt}]}],
         "generationConfig": {
             "temperature": 1.0,
-            "responseMimeType": "application/json"  # JSON 모드 강제
+            "responseMimeType": "application/json"
         }
     }
 
@@ -61,31 +108,34 @@ def call_gemini_raw(prompt):
         if response.status_code != 200:
             error_msg = f"API Error {response.status_code}: {response.text}"
             print(f"❌ {error_msg}")
-            # 에러 발생 시 텔레그램으로 알림
-            send_telegram_msg(f"⚠️ [Error #{RUN_NUMBER}] 구글 API 호출 실패:\n{response.text[:200]}")
+            send_telegram_msg(f"⚠️ [Error #{RUN_NUMBER}] API 호출 실패 ({CURRENT_MODEL_NAME}):\n{response.text[:200]}")
             return None
 
-        # 응답 파싱
         result_json = response.json()
-        text_content = result_json.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-        return text_content
+        # 응답 구조 파싱 (안전하게)
+        candidates = result_json.get('candidates', [])
+        if not candidates:
+            return None
+            
+        parts = candidates[0].get('content', {}).get('parts', [])
+        if not parts:
+            return None
+            
+        return parts[0].get('text', '')
 
     except Exception as e:
         print(f"❌ 통신 오류: {e}")
         return None
 
 # ==========================================
-# 2. 뉴스 분석 함수
+# 3. 뉴스 분석 루프
 # ==========================================
 def analyze_news_batch(articles):
     results = []
     batch_size = 5
     
-    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Raw API Mode)...")
+    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: {CURRENT_MODEL_NAME})...")
     
-    # 시작 알림 (테스트용)
-    # send_telegram_msg(f"🎬 [Run #{RUN_NUMBER}] 분석 시작... (데이터: {len(articles)}건)")
-
     for i in range(0, len(articles), batch_size):
         batch = articles[i:i + batch_size]
         print(f"   Processing batch {i//batch_size + 1}...")
@@ -120,15 +170,14 @@ def analyze_news_batch(articles):
                 print("⚠️ JSON 파싱 실패")
                 continue
         
-        time.sleep(1) # API 부하 조절
+        time.sleep(1)
 
     return results
 
 # ==========================================
-# 3. 결과 저장 및 전송
+# 4. 저장 및 알림
 # ==========================================
 def save_and_notify(data):
-    # 파일 저장
     output_data = {
         "analyzed_at": str(datetime.now()),
         "run_number": RUN_NUMBER,
@@ -142,15 +191,15 @@ def save_and_notify(data):
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
 
+    if len(data) == 0:
+        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 데이터 0건. (모델: {CURRENT_MODEL_NAME})")
+        return
+
     important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
     important_news.sort(key=lambda x: x.get('score', 0), reverse=True)
     top_news = important_news[:5]
 
-    if len(data) == 0:
-        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석된 데이터가 없습니다. (Raw API 오류 확인 필요)")
-        return
-
-    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(기준: {IMPACT_THRESHOLD}점 이상)\n\n"
+    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(모델: {CURRENT_MODEL_NAME})\n\n"
     
     if not top_news:
         msg += "특이사항 없음 (중요 뉴스 없음)"
@@ -162,7 +211,6 @@ def save_and_notify(data):
             msg += f"└ {item.get('summary')}\n"
             msg += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
     
-    # 메시지 전송
     send_telegram_msg(msg)
 
 if __name__ == "__main__":
@@ -176,7 +224,5 @@ if __name__ == "__main__":
             save_and_notify(results)
         else:
             print("📭 뉴스 데이터 없음")
-            send_telegram_msg(f"📭 [GlobalStockNow #{RUN_NUMBER}] 수집된 뉴스 데이터가 없습니다.")
     else:
         print(f"❌ {INPUT_FILE} 파일 없음")
-        send_telegram_msg(f"❌ [GlobalStockNow #{RUN_NUMBER}] 데이터 파일이 없습니다.")
