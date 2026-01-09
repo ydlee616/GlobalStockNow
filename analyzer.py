@@ -2,7 +2,7 @@ import json
 import time
 import requests
 import os
-import sys  # 시스템 종료를 위해 추가
+import sys
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from datetime import datetime
@@ -20,19 +20,14 @@ INPUT_FILE = 'breaking_news.json'
 OUTPUT_FILE = 'analyzed_news.json'
 
 # ==========================================
-# 0. 초기화 및 안전장치 (가장 중요!)
+# 0. 모델 초기화 (하이브리드 방식)
 # ==========================================
 def init_model():
     if not GOOGLE_API_KEY:
-        error_msg = "❌ FATAL: GOOGLE_API_KEY가 설정되지 않았습니다. Secrets를 확인하세요."
+        error_msg = "❌ FATAL: GOOGLE_API_KEY가 없습니다. Secrets를 확인하세요."
         print(error_msg)
-        # 텔레그램으로 경고 보내고 스크립트 강제 종료
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [System Alert #{RUN_NUMBER}] {error_msg}"}
-            )
-        sys.exit(1) # 여기서 프로그램 종료!
+        send_telegram_alert(error_msg)
+        sys.exit(1)
 
     genai.configure(api_key=GOOGLE_API_KEY)
     
@@ -48,13 +43,37 @@ def init_model():
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
     }
     
-    return genai.GenerativeModel(
-        'gemini-1.5-flash', 
-        generation_config=generation_config,
-        safety_settings=safety_settings
-    )
+    # 🔥 [수정됨] 모델 이름을 구체적으로 변경 (순차 시도)
+    model_names = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-pro']
+    
+    for name in model_names:
+        try:
+            print(f"Testing model: {name}...")
+            model = genai.GenerativeModel(
+                name, 
+                generation_config=generation_config,
+                safety_settings=safety_settings
+            )
+            # 테스트 호출 (연결 확인)
+            model.generate_content("test") 
+            print(f"✅ Model selected: {name}")
+            return model
+        except Exception as e:
+            print(f"⚠️ {name} failed: {e}")
+            continue
+            
+    # 모든 모델 실패 시
+    send_telegram_alert("❌ 모든 AI 모델 연결 실패. API Key 권한을 확인하세요.")
+    sys.exit(1)
 
-# 전역 모델 생성 (여기서 실패하면 바로 종료됨)
+def send_telegram_alert(msg):
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+            data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [System Alert #{RUN_NUMBER}] {msg}"}
+        )
+
+# 전역 모델 생성
 model = init_model()
 
 # ==========================================
@@ -85,9 +104,7 @@ def analyze_news_batch(articles):
         """
 
         try:
-            # model은 이미 위에서 초기화되었음이 보장됨
             response = model.generate_content(prompt)
-            
             batch_result = json.loads(response.text)
             
             if isinstance(batch_result, list):
@@ -97,28 +114,17 @@ def analyze_news_batch(articles):
                     results.extend(batch_result['articles'])
                 else:
                     results.append(batch_result)
-            
             time.sleep(1)
             
         except Exception as e:
-            print(f"⚠️ Error in batch {i}: {e}")
-            send_error_log(f"Batch {i} Error: {str(e)}")
+            print(f"⚠️ Batch {i} Error: {e}")
+            # send_telegram_alert(f"Batch {i} Error: {str(e)}") # 너무 시끄러우면 주석 처리
             continue
 
     return results
 
 # ==========================================
-# 2. 에러 로그 전송
-# ==========================================
-def send_error_log(error_msg):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-        data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [Error #{RUN_NUMBER}] {error_msg}"}
-    )
-
-# ==========================================
-# 3. 결과 저장 및 전송
+# 2. 결과 저장 및 전송
 # ==========================================
 def save_and_notify(data):
     output_data = {
@@ -139,28 +145,24 @@ def save_and_notify(data):
     top_news = important_news[:5]
 
     if len(data) == 0:
-        msg = f"🚫 **[GlobalStockNow #{RUN_NUMBER}] 분석 데이터 없음**\nAI 응답이 비어있습니다."
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-        return
-
-    if not top_news:
-        msg = f"📉 **[GlobalStockNow #{RUN_NUMBER}]**\n특이사항 없음 (모든 뉴스 {IMPACT_THRESHOLD}점 미만)"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      data={"chat_id": TELEGRAM_CHAT_ID, "text": f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 데이터 없음 (0건)", "parse_mode": "Markdown"})
         return
 
     msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(기준: {IMPACT_THRESHOLD}점 이상)\n\n"
-    for item in top_news:
-        score = item.get('score', 0)
-        icon = "🔥" if score >= 7.0 else "⚡"
-        msg += f"{icon} **{item.get('title')}** ({score}점)\n"
-        msg += f"└ {item.get('summary')}\n"
-        msg += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
+    
+    if not top_news:
+        msg += "특이사항 없음 (중요 뉴스 없음)"
+    else:
+        for item in top_news:
+            score = item.get('score', 0)
+            icon = "🔥" if score >= 7.0 else "⚡"
+            msg += f"{icon} **{item.get('title')}** ({score}점)\n"
+            msg += f"└ {item.get('summary')}\n"
+            msg += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
     
     requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
 
-# ==========================================
-# 메인 실행부
-# ==========================================
 if __name__ == "__main__":
     if os.path.exists(INPUT_FILE):
         with open(INPUT_FILE, 'r', encoding='utf-8') as f:
