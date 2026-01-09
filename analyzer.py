@@ -26,65 +26,20 @@ def send_telegram_msg(message):
     except: pass
 
 # ==========================================
-# 1. 사용 가능한 모델 자동 찾기 (404 방지)
+# 1. Gemini API 호출 (Pro 모델 + 안전장치 해제)
 # ==========================================
-def find_working_model():
+def call_gemini_pro_slowly(prompt):
     if not GOOGLE_API_KEY: return None
 
-    print("🔍 Searching for available models...")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GOOGLE_API_KEY}"
-    
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            print(f"⚠️ 모델 목록 조회 실패: {response.status_code}")
-            return "models/gemini-pro" # 비상시 기본값
-
-        data = response.json()
-        models = data.get('models', [])
-        
-        # 우선순위 1: Flash (빠름)
-        for m in models:
-            if 'gemini-1.5-flash' in m['name']:
-                print(f"✅ Selected Flash Model: {m['name']}")
-                return (m['name'], 5) # (모델명, 휴식시간 5초)
-        
-        # 우선순위 2: Pro (느리지만 성능 좋음)
-        for m in models:
-            if 'gemini-1.5-pro' in m['name']:
-                print(f"✅ Selected Pro Model: {m['name']}")
-                return (m['name'], 35) # (모델명, 휴식시간 35초 - 429 방지)
-        
-        # 우선순위 3: 구형 Pro
-        for m in models:
-            if 'gemini-pro' in m['name']:
-                print(f"✅ Selected Standard Model: {m['name']}")
-                return (m['name'], 35)
-
-        # 못 찾으면 기본값
-        return ("models/gemini-1.5-flash", 5)
-
-    except Exception as e:
-        print(f"❌ 모델 탐색 중 에러: {e}")
-        return ("models/gemini-1.5-flash", 5)
-
-# 전역 변수로 모델과 휴식 시간 확정
-SELECTED_MODEL_NAME, SLEEP_TIME = find_working_model()
-
-# ==========================================
-# 2. Gemini API 호출 (Raw String 방식)
-# ==========================================
-def call_gemini_dynamic(prompt):
-    if not GOOGLE_API_KEY: return None
-
-    # 확정된 모델 이름 사용
-    url = f"https://generativelanguage.googleapis.com/v1beta/{SELECTED_MODEL_NAME}:generateContent?key={GOOGLE_API_KEY}"
+    # 🔥 [핵심 1] 작동이 확인된 'gemini-pro' 모델 사용
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
     headers = {'Content-Type': 'application/json'}
     
     full_prompt = prompt + "\n\n[SYSTEM]: Output strictly a valid JSON list. No Markdown."
 
     data = {
         "contents": [{"parts": [{"text": full_prompt}]}],
+        # 🔥 [핵심 2] 뉴스 분석을 위해 안전장치 해제
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -94,23 +49,19 @@ def call_gemini_dynamic(prompt):
         "generationConfig": {"temperature": 0.4}
     }
 
+    # 재시도 로직 (최대 3회)
     for attempt in range(3):
         try:
             response = requests.post(url, headers=headers, json=data, timeout=30)
             
             if response.status_code == 200:
                 text = response.json()['candidates'][0]['content']['parts'][0]['text']
-                # 마크다운 제거
-                clean_text = re.sub(r'```json|```', '', text).strip()
-                return clean_text
+                return re.sub(r'```json|```', '', text).strip()
             
-            elif response.status_code == 404:
-                print(f"❌ 404 Error: 모델을 찾을 수 없음 ({SELECTED_MODEL_NAME})")
-                return None
-
             elif response.status_code == 429:
-                print(f"⏳ 429 Quota Limit. 대기 중... ({attempt+1}/3)")
-                time.sleep(SLEEP_TIME + 10) # 지정된 시간보다 10초 더 대기
+                # 429 발생 시 아주 길게 대기 (40초)
+                print(f"⏳ 과속 감지(429). 40초 대기 중... ({attempt+1}/3)")
+                time.sleep(40)
                 continue
             
             else:
@@ -125,19 +76,17 @@ def call_gemini_dynamic(prompt):
     return None
 
 # ==========================================
-# 3. 뉴스 분석 (가변 속도 적용)
+# 2. 뉴스 분석 (느림의 미학)
 # ==========================================
 def analyze_news_batch(articles):
     results = []
     batch_size = 5 
     
-    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: {SELECTED_MODEL_NAME})...")
-    
-    # 35개 전부 분석 시도
-    target_articles = articles[:35]
+    # 35개 뉴스 처리 -> 7번 요청 -> 약 5분 소요
+    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: gemini-pro, Mode: Slow & Safe)...")
 
-    for i in range(0, len(target_articles), batch_size):
-        batch = target_articles[i:i + batch_size]
+    for i in range(0, len(articles), batch_size):
+        batch = articles[i:i + batch_size]
         print(f"   Processing batch {i//batch_size + 1}...")
         
         prompt = f"""
@@ -154,7 +103,7 @@ def analyze_news_batch(articles):
         - related_stocks (List)
         """
 
-        response_text = call_gemini_dynamic(prompt)
+        response_text = call_gemini_pro_slowly(prompt)
         
         if response_text:
             try:
@@ -166,14 +115,15 @@ def analyze_news_batch(articles):
             except: 
                 print("⚠️ JSON Parsing Failed")
         
-        # 🔥 모델에 따라 계산된 휴식 시간 적용
-        print(f"   ☕ Cooling down {SLEEP_TIME}s...")
-        time.sleep(SLEEP_TIME)
+        # 🔥 [핵심 3] API 등급(2 RPM) 준수를 위한 강제 휴식 (35초)
+        # 이 시간은 절대 줄이면 안 됩니다.
+        print("   ☕ Resting 35s to respect API limit...")
+        time.sleep(35)
 
     return results
 
 # ==========================================
-# 4. 저장 및 알림
+# 3. 저장 및 알림
 # ==========================================
 def save_and_notify(data):
     output_data = {"analyzed_at": str(datetime.now()), "run_number": RUN_NUMBER, "reports": data}
@@ -185,15 +135,14 @@ def save_and_notify(data):
     if not TELEGRAM_BOT_TOKEN: return
 
     if not data:
-        # 실패 시 로그 전송
-        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패: {SELECTED_MODEL_NAME} 응답 없음")
+        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패: 결과 없음")
         return
 
     top_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
     top_news.sort(key=lambda x: x.get('score', 0), reverse=True)
     top_news = top_news[:5]
 
-    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(모델: {SELECTED_MODEL_NAME})\n\n"
+    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(모델: Gemini Pro / 안전모드)\n\n"
     
     if not top_news:
         msg += "특이사항 없음 (중요 뉴스 없음)"
@@ -219,7 +168,6 @@ if __name__ == "__main__":
             save_and_notify(results)
         else:
             print("📭 뉴스 데이터 없음")
-            # 데이터가 없을 때는 조용히 종료하거나 로그만 남김
-            # send_telegram_msg(f"📭 [GlobalStockNow #{RUN_NUMBER}] 수집된 뉴스 없음") 
+            # 이미 수집된 뉴스가 없다는 걸 알았으므로, 굳이 텔레그램을 보내지 않습니다.
     else:
         print(f"❌ {INPUT_FILE} 파일 없음")
