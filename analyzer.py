@@ -20,17 +20,24 @@ INPUT_FILE = 'breaking_news.json'
 OUTPUT_FILE = 'analyzed_news.json'
 
 # ==========================================
-# 0. 모델 초기화 (하이브리드 방식)
+# 0. 모델 초기화 (자동 탐색 기능)
 # ==========================================
 def init_model():
     if not GOOGLE_API_KEY:
-        error_msg = "❌ FATAL: GOOGLE_API_KEY가 없습니다. Secrets를 확인하세요."
-        print(error_msg)
-        send_telegram_alert(error_msg)
+        print("❌ FATAL: API Key Missing")
         sys.exit(1)
 
     genai.configure(api_key=GOOGLE_API_KEY)
     
+    # 시도할 모델 목록 (순서대로 시도)
+    candidate_models = [
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-flash-001',
+        'gemini-1.5-pro',
+        'gemini-pro'
+    ]
+
     generation_config = {
         "temperature": 1,
         "response_mime_type": "application/json",
@@ -42,36 +49,31 @@ def init_model():
         HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
     }
-    
-    # 🔥 [수정됨] 모델 이름을 구체적으로 변경 (순차 시도)
-    model_names = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-pro']
-    
-    for name in model_names:
+
+    # 사용 가능한 모델 찾기
+    for model_name in candidate_models:
         try:
-            print(f"Testing model: {name}...")
+            print(f"🔍 Testing model: {model_name}...")
             model = genai.GenerativeModel(
-                name, 
-                generation_config=generation_config,
+                model_name, 
+                generation_config=generation_config, 
                 safety_settings=safety_settings
             )
-            # 테스트 호출 (연결 확인)
-            model.generate_content("test") 
-            print(f"✅ Model selected: {name}")
+            # 연결 테스트 (Hello)
+            model.generate_content("test")
+            print(f"✅ Success! Using model: {model_name}")
             return model
         except Exception as e:
-            print(f"⚠️ {name} failed: {e}")
+            print(f"⚠️ {model_name} failed: {e}")
             continue
-            
+    
     # 모든 모델 실패 시
-    send_telegram_alert("❌ 모든 AI 모델 연결 실패. API Key 권한을 확인하세요.")
+    error_msg = "❌ All AI models failed. Check library version in requirements.txt"
+    print(error_msg)
+    if TELEGRAM_BOT_TOKEN:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [System Alert #{RUN_NUMBER}] {error_msg}"})
     sys.exit(1)
-
-def send_telegram_alert(msg):
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-            data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [System Alert #{RUN_NUMBER}] {msg}"}
-        )
 
 # 전역 모델 생성
 model = init_model()
@@ -118,7 +120,6 @@ def analyze_news_batch(articles):
             
         except Exception as e:
             print(f"⚠️ Batch {i} Error: {e}")
-            # send_telegram_alert(f"Batch {i} Error: {str(e)}") # 너무 시끄러우면 주석 처리
             continue
 
     return results
@@ -127,6 +128,7 @@ def analyze_news_batch(articles):
 # 2. 결과 저장 및 전송
 # ==========================================
 def save_and_notify(data):
+    # 파일 저장
     output_data = {
         "analyzed_at": str(datetime.now()),
         "run_number": RUN_NUMBER,
@@ -146,13 +148,13 @@ def save_and_notify(data):
 
     if len(data) == 0:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      data={"chat_id": TELEGRAM_CHAT_ID, "text": f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 데이터 없음 (0건)", "parse_mode": "Markdown"})
+                      data={"chat_id": TELEGRAM_CHAT_ID, "text": f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패 (데이터 0건)", "parse_mode": "Markdown"})
         return
 
     msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(기준: {IMPACT_THRESHOLD}점 이상)\n\n"
     
     if not top_news:
-        msg += "특이사항 없음 (중요 뉴스 없음)"
+        msg += "특이사항 없음"
     else:
         for item in top_news:
             score = item.get('score', 0)
