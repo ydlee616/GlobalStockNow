@@ -1,180 +1,60 @@
-import json
-import time
-import requests
 import os
+import requests
+import json
 import sys
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-from datetime import datetime
 
 # ==========================================
-# [설정 영역]
+# [시스템 진단 모드]
 # ==========================================
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-RUN_NUMBER = os.environ.get("GITHUB_RUN_NUMBER", "Local")
+print("🚀 [System Diagnosis] 시스템 점검을 시작합니다...")
 
-IMPACT_THRESHOLD = 2.0
-INPUT_FILE = 'breaking_news.json'
-OUTPUT_FILE = 'analyzed_news.json'
+# 1. API Key 검사
+api_key = os.environ.get("GOOGLE_API_KEY", "")
 
-# ==========================================
-# 0. 모델 초기화 (자동 탐색 기능)
-# ==========================================
-def init_model():
-    if not GOOGLE_API_KEY:
-        print("❌ FATAL: API Key Missing")
-        sys.exit(1)
-
-    genai.configure(api_key=GOOGLE_API_KEY)
-    
-    # 시도할 모델 목록 (순서대로 시도)
-    candidate_models = [
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-flash-001',
-        'gemini-1.5-pro',
-        'gemini-pro'
-    ]
-
-    generation_config = {
-        "temperature": 1,
-        "response_mime_type": "application/json",
-    }
-    
-    safety_settings = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-
-    # 사용 가능한 모델 찾기
-    for model_name in candidate_models:
-        try:
-            print(f"🔍 Testing model: {model_name}...")
-            model = genai.GenerativeModel(
-                model_name, 
-                generation_config=generation_config, 
-                safety_settings=safety_settings
-            )
-            # 연결 테스트 (Hello)
-            model.generate_content("test")
-            print(f"✅ Success! Using model: {model_name}")
-            return model
-        except Exception as e:
-            print(f"⚠️ {model_name} failed: {e}")
-            continue
-    
-    # 모든 모델 실패 시
-    error_msg = "❌ All AI models failed. Check library version in requirements.txt"
-    print(error_msg)
-    if TELEGRAM_BOT_TOKEN:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      data={"chat_id": TELEGRAM_CHAT_ID, "text": f"⚠️ [System Alert #{RUN_NUMBER}] {error_msg}"})
+if not api_key:
+    print("❌ [FATAL] GOOGLE_API_KEY가 없습니다. Secrets 설정을 확인하세요.")
     sys.exit(1)
 
-# 전역 모델 생성
-model = init_model()
+print(f"✅ API Key 발견 (길이: {len(api_key)}자)")
+print(f"   - 시작: {api_key[:4]}...")
+print(f"   - 끝: ...{api_key[-4:]}")
 
-# ==========================================
-# 1. 뉴스 분석 함수
-# ==========================================
-def analyze_news_batch(articles):
-    results = []
-    batch_size = 5
+# 공백 검사
+if api_key.strip() != api_key:
+    print("⚠️ [WARNING] 키 앞뒤에 공백(스페이스바)이 감지되었습니다! GitHub Secrets에서 공백을 지워주세요.")
+else:
+    print("✅ 키 형식 정상 (공백 없음)")
+
+# 2. 라이브러리 없이 직접 통신 테스트 (Raw Request)
+# Gemini 1.5 Flash 모델에 직접 '안녕'이라고 인사를 건네봅니다.
+print("\n📡 [Network Test] Google 서버에 직접 접속을 시도합니다...")
+
+url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key.strip()}"
+headers = {'Content-Type': 'application/json'}
+data = {
+    "contents": [{"parts": [{"text": "Hello, are you working?"}]}]
+}
+
+try:
+    response = requests.post(url, headers=headers, json=data)
     
-    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작... (기준: {IMPACT_THRESHOLD}점)")
-
-    for i in range(0, len(articles), batch_size):
-        batch = articles[i:i + batch_size]
-        print(f"   Processing batch {i//batch_size + 1}...")
-        
-        prompt = f"""
-        You are a financial analyst. Analyze these news articles.
-        MUST output a JSON list.
-        
-        [Articles]:
-        {json.dumps(batch, ensure_ascii=False)}
-
-        [Fields Required]:
-        - title (Korean summary title)
-        - summary (Korean 1 sentence)
-        - score (Float 0.0-10.0 impact score)
-        - related_stocks (List of strings)
-        """
-
-        try:
-            response = model.generate_content(prompt)
-            batch_result = json.loads(response.text)
-            
-            if isinstance(batch_result, list):
-                results.extend(batch_result)
-            elif isinstance(batch_result, dict):
-                if 'articles' in batch_result:
-                    results.extend(batch_result['articles'])
-                else:
-                    results.append(batch_result)
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"⚠️ Batch {i} Error: {e}")
-            continue
-
-    return results
-
-# ==========================================
-# 2. 결과 저장 및 전송
-# ==========================================
-def save_and_notify(data):
-    # 파일 저장
-    output_data = {
-        "analyzed_at": str(datetime.now()),
-        "run_number": RUN_NUMBER,
-        "count": len(data),
-        "reports": data
-    }
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        json.dump(output_data, f, ensure_ascii=False, indent=4)
+    print(f"   - 상태 코드: {response.status_code}")
     
-    print(f"✅ 분석 완료! 총 {len(data)}건 저장됨.")
-
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-
-    important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
-    important_news.sort(key=lambda x: x.get('score', 0), reverse=True)
-    top_news = important_news[:5]
-
-    if len(data) == 0:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      data={"chat_id": TELEGRAM_CHAT_ID, "text": f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패 (데이터 0건)", "parse_mode": "Markdown"})
-        return
-
-    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(기준: {IMPACT_THRESHOLD}점 이상)\n\n"
-    
-    if not top_news:
-        msg += "특이사항 없음"
+    # 결과 분석
+    if response.status_code == 200:
+        print("🎉 [SUCCESS] 연결 성공! API 키와 모델이 정상 작동 중입니다.")
+        print(f"   - 응답: {response.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'No text')}")
     else:
-        for item in top_news:
-            score = item.get('score', 0)
-            icon = "🔥" if score >= 7.0 else "⚡"
-            msg += f"{icon} **{item.get('title')}** ({score}점)\n"
-            msg += f"└ {item.get('summary')}\n"
-            msg += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
-    
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+        print("❌ [FAIL] 연결 실패. 구글 서버의 에러 메시지는 다음과 같습니다:")
+        print("="*40)
+        print(response.text)  # 에러의 진짜 이유가 여기에 나옵니다
+        print("="*40)
+        
+        # 404 에러일 경우 추가 가이드
+        if response.status_code == 404:
+            print("💡 [Tip] 404 에러는 '키는 맞지만, 이 프로젝트에서 Gemini API 사용이 활성화되지 않았음'을 의미할 수 있습니다.")
 
-if __name__ == "__main__":
-    if os.path.exists(INPUT_FILE):
-        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            raw_data = json.load(f)
-            articles = raw_data.get('articles', [])
-            
-        if articles:
-            results = analyze_news_batch(articles)
-            save_and_notify(results)
-        else:
-            print("📭 뉴스 데이터 없음")
-    else:
-        print(f"❌ {INPUT_FILE} 파일 없음")
+except Exception as e:
+    print(f"❌ [CRITICAL] 통신 오류 발생: {e}")
+
+print("\n🏁 [Diagnosis] 진단 종료.")
