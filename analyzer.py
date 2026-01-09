@@ -26,27 +26,70 @@ def send_telegram_msg(message):
     except: pass
 
 # ==========================================
-# 1. Gemini API 호출 (Pro 모델 + 35초 딜레이)
+# 1. 사용 가능한 모델 및 속도 자동 감지 (핵심)
 # ==========================================
-def call_gemini_safe_mode(prompt):
-    if not GOOGLE_API_KEY: return None
+def get_optimal_model_and_delay():
+    if not GOOGLE_API_KEY: return None, 0
 
-    # 🔥 [핵심 1] 1.5-flash(404오류) 대신, 확실한 'gemini-pro' 사용
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
+    print("🔍 Checking available AI models for your API Key...")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GOOGLE_API_KEY}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            models = [m['name'] for m in data.get('models', [])]
+            
+            # 1순위: Gemini 1.5 Flash (빠름, 5초 휴식)
+            for m in models:
+                if 'gemini-1.5-flash' in m:
+                    print(f"✅ Found Fast Model: {m}")
+                    return m, 5
+            
+            # 2순위: Gemini 1.5 Pro (느림, 35초 휴식)
+            for m in models:
+                if 'gemini-1.5-pro' in m:
+                    print(f"✅ Found High-Performance Model: {m}")
+                    return m, 35
+            
+            # 3순위: Gemini Pro Legacy (느림, 35초 휴식)
+            for m in models:
+                if 'gemini-pro' in m:
+                    print(f"✅ Found Legacy Model: {m}")
+                    return m, 35
+                    
+        print("⚠️ Model list check failed. Fallback to 'gemini-pro'.")
+    except Exception as e:
+        print(f"⚠️ Connection error during model check: {e}")
+
+    # 안전하게 기본값은 Pro + 35초 (404 방지보다는 429 방지가 나음)
+    return "models/gemini-pro", 35
+
+# 모델과 딜레이 확정
+SELECTED_MODEL, BATCH_DELAY = get_optimal_model_and_delay()
+
+# ==========================================
+# 2. Gemini API 호출
+# ==========================================
+def call_gemini(prompt):
+    if not GOOGLE_API_KEY or not SELECTED_MODEL: return None
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/{SELECTED_MODEL}:generateContent?key={GOOGLE_API_KEY}"
     headers = {'Content-Type': 'application/json'}
     
-    full_prompt = prompt + "\n\n[SYSTEM]: Output strictly a valid JSON list. No Markdown."
+    # JSON 강제 출력 프롬프트
+    full_prompt = prompt + "\n\n[SYSTEM]: Output strictly a valid JSON list. No Markdown, no explanation."
 
     data = {
         "contents": [{"parts": [{"text": full_prompt}]}],
-        # 🔥 [핵심 2] 뉴스 분석 거부 방지 (안전장치 해제)
+        # 안전장치 해제 (뉴스 분석 거부 방지)
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ],
-        "generationConfig": {"temperature": 0.4}
+        "generationConfig": {"temperature": 0.3}
     }
 
     # 재시도 로직
@@ -56,18 +99,23 @@ def call_gemini_safe_mode(prompt):
             
             if response.status_code == 200:
                 text = response.json()['candidates'][0]['content']['parts'][0]['text']
-                # 마크다운 제거 후 반환
-                return re.sub(r'```json|```', '', text).strip()
+                # 마크다운 코드블록 제거
+                clean_text = re.sub(r'```json|```', '', text).strip()
+                return clean_text
             
             elif response.status_code == 429:
-                # 429(속도제한) 발생 시 40초 대기
-                print(f"⏳ 과속 감지(429). 40초 대기... ({attempt+1}/3)")
-                time.sleep(40)
+                print(f"⏳ Quota Exceeded (429). Cooling down {BATCH_DELAY + 10}s... ({attempt+1}/3)")
+                time.sleep(BATCH_DELAY + 10) # 지정된 딜레이보다 조금 더 쉼
                 continue
+            
+            elif response.status_code == 404:
+                print(f"❌ Critical Error: Model {SELECTED_MODEL} not found (404).")
+                return None
             
             else:
                 print(f"❌ API Error {response.status_code}: {response.text[:100]}")
-                return None
+                time.sleep(5)
+                continue
 
         except Exception as e:
             print(f"❌ Connection Error: {e}")
@@ -77,35 +125,35 @@ def call_gemini_safe_mode(prompt):
     return None
 
 # ==========================================
-# 2. 뉴스 분석 (배치 처리)
+# 3. 뉴스 분석 (배치 처리)
 # ==========================================
 def analyze_news_batch(articles):
     results = []
     # 한 번에 4개씩 처리
     batch_size = 4
     
-    # 35개 뉴스 -> 약 9번 요청
-    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: gemini-pro / Mode: Slow)...")
+    print(f"🔄 [Run #{RUN_NUMBER}] Analysis Started using {SELECTED_MODEL} (Delay: {BATCH_DELAY}s)...")
 
+    # 최대 34개 뉴스 처리
     for i in range(0, len(articles), batch_size):
         batch = articles[i:i + batch_size]
-        print(f"   Processing batch {i//batch_size + 1}...")
+        print(f"   Processing batch {i//batch_size + 1}/{len(articles)//batch_size + 1}...")
         
         prompt = f"""
-        You are a financial analyst. Analyze these news items.
+        Analyze the following financial news articles.
         
         [Articles]:
         {json.dumps(batch, ensure_ascii=False)}
 
-        [Requirements]:
-        Return a JSON LIST of objects:
-        - title (Korean)
-        - summary (Korean)
-        - score (Float 0-10)
-        - related_stocks (List)
+        [Requirement]:
+        Return a JSON LIST of objects with these exact keys:
+        - title (Korean summary)
+        - summary (Korean 1 sentence)
+        - score (Float 0.0-10.0 impact score)
+        - related_stocks (List of strings)
         """
 
-        response_text = call_gemini_safe_mode(prompt)
+        response_text = call_gemini(prompt)
         
         if response_text:
             try:
@@ -115,36 +163,42 @@ def analyze_news_batch(articles):
                     if 'articles' in data: results.extend(data['articles'])
                     else: results.append(data)
             except: 
-                print("⚠️ JSON Parsing Failed (Skipping batch)")
+                print("⚠️ JSON Parsing Failed for this batch.")
         
-        # 🔥 [핵심 3] 무료 등급 한계 극복을 위한 강제 휴식 (35초)
-        # 답답하시더라도 이 시간을 지켜야 429 에러가 안 납니다.
-        print("   ☕ Cooling down 35s...")
-        time.sleep(35)
+        # 🔥 동적으로 설정된 딜레이만큼 휴식
+        print(f"   ☕ Resting {BATCH_DELAY}s...")
+        time.sleep(BATCH_DELAY)
 
     return results
 
 # ==========================================
-# 3. 저장 및 알림
+# 4. 저장 및 알림
 # ==========================================
 def save_and_notify(data):
-    output_data = {"analyzed_at": str(datetime.now()), "run_number": RUN_NUMBER, "reports": data}
+    # 결과 저장
+    output_data = {
+        "analyzed_at": str(datetime.now()),
+        "run_number": RUN_NUMBER,
+        "count": len(data),
+        "reports": data
+    }
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(output_data, f, ensure_ascii=False, indent=4)
     
-    print(f"✅ 분석 완료! 총 {len(data)}건 저장됨.")
+    print(f"✅ Analysis Complete! Total {len(data)} reports saved.")
 
     if not TELEGRAM_BOT_TOKEN: return
 
     if not data:
-        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패: 결과 없음")
+        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패: 결과 데이터 없음 ({SELECTED_MODEL})")
         return
 
+    # 중요 뉴스 필터링
     top_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
     top_news.sort(key=lambda x: x.get('score', 0), reverse=True)
-    top_news = top_news[:5]
+    top_news = top_news[:5] # 상위 5개만 전송
 
-    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(안전모드 분석완료)\n\n"
+    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(모델: {SELECTED_MODEL})\n\n"
     
     if not top_news:
         msg += "특이사항 없음 (중요 뉴스 없음)"
@@ -162,14 +216,15 @@ if __name__ == "__main__":
     if os.path.exists(INPUT_FILE):
         with open(INPUT_FILE, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
+            # JSON 구조 호환성 처리
             if isinstance(raw_data, list): articles = raw_data
             else: articles = raw_data.get('articles', [])
             
         if articles:
-            # 최대 35개 모두 분석 시도
             results = analyze_news_batch(articles)
             save_and_notify(results)
         else:
-            print("📭 뉴스 데이터 없음")
+            print("📭 No news data found.")
+            # 데이터가 없을 때는 조용히 종료 (이전 단계에서 수집 실패 알림이 갔을 것임)
     else:
-        print(f"❌ {INPUT_FILE} 파일 없음")
+        print(f"❌ Input file {INPUT_FILE} not found.")
