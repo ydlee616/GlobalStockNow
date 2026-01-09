@@ -2,7 +2,7 @@ import json
 import time
 import requests
 import os
-import sys
+import re
 from datetime import datetime
 
 # ==========================================
@@ -30,27 +30,28 @@ def send_telegram_msg(message):
     except: pass
 
 # ==========================================
-# 1. Gemini API 호출 (Flash 강제 + 재시도)
+# 1. Gemini API 호출 (Flash 강제 고정)
 # ==========================================
 def call_gemini_flash(prompt):
     if not GOOGLE_API_KEY: return None
 
-    # 🔥 [핵심] Pro 모델 대신 Flash 모델을 강제로 지정 (속도 제한 15 RPM)
-    # 모델명 뒤에 버전을 명시하지 않아도 최신 Flash로 연결됩니다.
+    # 🔥 [핵심] Pro 모델 절대 금지. Flash 모델 강제 지정.
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
     
     headers = {'Content-Type': 'application/json'}
     
-    full_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON array."
+    # JSON 포맷 강제 프롬프트
+    full_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON array. No markdown code blocks."
+    
     data = {
         "contents": [{"parts": [{"text": full_prompt}]}],
         "generationConfig": {
-            "temperature": 1.0, 
+            "temperature": 0.5, # 분석 정확도를 위해 온도 낮춤
             "responseMimeType": "application/json"
         }
     }
 
-    # 재시도 로직 (최대 3회)
+    # 재시도 로직 (Max 3회)
     for attempt in range(3):
         try:
             response = requests.post(url, headers=headers, json=data, timeout=30)
@@ -60,7 +61,7 @@ def call_gemini_flash(prompt):
             
             elif response.status_code == 429:
                 print(f"⏳ 429 Quota Limit. 10초 대기 후 재시도... ({attempt+1}/3)")
-                time.sleep(10) # Flash는 10초만 쉬어도 충분함
+                time.sleep(10)
                 continue
             
             else:
@@ -79,46 +80,49 @@ def call_gemini_flash(prompt):
 # ==========================================
 def analyze_news_batch(articles):
     results = []
-    # 한 번에 5개씩 처리
-    batch_size = 5
+    batch_size = 5 # Flash 모델은 5개씩 처리해도 충분함
     
-    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: gemini-1.5-flash)...")
+    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Target: {len(articles)} articles)...")
 
-    # 전체 뉴스 중 최대 20개까지만 분석 (Quota 안전 장치)
-    target_articles = articles[:20]
+    # 최대 25개까지만 분석 (안전하게 끊기)
+    target_articles = articles[:25]
 
     for i in range(0, len(target_articles), batch_size):
         batch = target_articles[i:i + batch_size]
         print(f"   Processing batch {i//batch_size + 1}...")
         
         prompt = f"""
-        You are a financial analyst. Analyze these news articles.
-        Return a JSON LIST of objects.
+        You are a professional stock market analyst. 
+        Analyze the following news articles and evaluate their impact on the stock market.
         
         [Articles]:
         {json.dumps(batch, ensure_ascii=False)}
 
-        [Fields Required]:
-        - title (Korean summary title)
-        - summary (Korean 1 sentence)
-        - score (Float 0.0-10.0 impact score)
-        - related_stocks (List of strings)
+        [Requirements]:
+        Return a JSON LIST of objects with these keys:
+        - title: concise title in Korean.
+        - summary: 1-sentence summary in Korean.
+        - score: Float number (0.0 - 10.0) based on market impact.
+        - related_stocks: List of related stock ticker symbols or names (e.g., ["Samsung", "SK Hynix"]).
         """
 
         response_text = call_gemini_flash(prompt)
         
         if response_text:
             try:
-                data = json.loads(response_text)
+                # 가끔 마크다운 코드블록(```json)이 섞여 나올 때 제거
+                clean_text = re.sub(r'```json\s*|\s*```', '', response_text)
+                data = json.loads(clean_text)
+                
                 if isinstance(data, list): results.extend(data)
                 elif isinstance(data, dict): 
                     if 'articles' in data: results.extend(data['articles'])
                     else: results.append(data)
-            except: pass
+            except Exception as e:
+                print(f"⚠️ JSON Parsing Failed: {e}")
         
-        # 🔥 Flash 모델의 제한(1분 15회)을 지키기 위해 5초 휴식
-        print("   ☕ Cooling down 5s...")
-        time.sleep(5)
+        # 🔥 Flash 모델 권장 속도 준수 (3초 휴식)
+        time.sleep(3)
 
     return results
 
@@ -174,5 +178,7 @@ if __name__ == "__main__":
             save_and_notify(results)
         else:
             print("📭 뉴스 데이터 없음")
+            # 데이터가 없을 때도 알림
+            send_telegram_msg(f"📭 [GlobalStockNow #{RUN_NUMBER}] 수집된 뉴스가 없습니다.")
     else:
         print(f"❌ {INPUT_FILE} 파일 없음")
