@@ -2,7 +2,7 @@ import json
 import time
 import requests
 import os
-import re  # 정규표현식 모듈 (필수)
+import sys
 from datetime import datetime
 
 # ==========================================
@@ -19,7 +19,7 @@ INPUT_FILE = 'breaking_news.json'
 OUTPUT_FILE = 'analyzed_news.json'
 
 # ==========================================
-# 0. 헬퍼 함수
+# 0. 텔레그램 전송 헬퍼
 # ==========================================
 def send_telegram_msg(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -29,129 +29,104 @@ def send_telegram_msg(message):
         requests.post(url, data=payload, timeout=5)
     except: pass
 
-def clean_json_text(text):
-    """
-    AI가 마크다운(```json ... ```)이나 잡설을 포함해도 
-    순수 JSON 리스트([...])만 강력하게 추출하는 함수
-    """
-    if not text: return None
-    
-    # 1. 마크다운 코드 블록 제거 (```json, ```)
-    text = re.sub(r'```json\s*', '', text)
-    text = re.sub(r'```\s*', '', text)
-    
-    # 2. 리스트의 시작([)과 끝(])을 찾아 그 사이만 추출
-    # (AI가 앞뒤로 "Here is the JSON:" 같은 말을 붙여도 무시함)
-    match = re.search(r'\[.*\]', text, re.DOTALL)
-    if match:
-        return match.group(0)
-    
-    return text.strip()
-
 # ==========================================
-# 1. Gemini API 호출
+# 1. Gemini API 호출 (Flash 강제 + 재시도)
 # ==========================================
 def call_gemini_flash(prompt):
     if not GOOGLE_API_KEY: return None
 
+    # 🔥 [핵심] Pro 모델 대신 Flash 모델을 강제로 지정 (속도 제한 15 RPM)
+    # 모델명 뒤에 버전을 명시하지 않아도 최신 Flash로 연결됩니다.
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
+    
     headers = {'Content-Type': 'application/json'}
     
-    # 프롬프트: JSON 포맷 강제
-    full_prompt = prompt + "\n\nCRITICAL: Return ONLY a valid JSON array. No Markdown. No explanations."
-    
+    full_prompt = prompt + "\n\nIMPORTANT: Output ONLY valid JSON array."
     data = {
         "contents": [{"parts": [{"text": full_prompt}]}],
         "generationConfig": {
-            "temperature": 0.2,  # 창의성 낮춤 (포맷 준수율 높임)
+            "temperature": 1.0, 
             "responseMimeType": "application/json"
         }
     }
 
-    # 재시도 로직
+    # 재시도 로직 (최대 3회)
     for attempt in range(3):
         try:
             response = requests.post(url, headers=headers, json=data, timeout=30)
+            
             if response.status_code == 200:
-                raw_text = response.json()['candidates'][0]['content']['parts'][0]['text']
-                # 🔥 여기서 클리닝 함수 호출
-                return clean_json_text(raw_text)
+                return response.json()['candidates'][0]['content']['parts'][0]['text']
+            
             elif response.status_code == 429:
-                print(f"⏳ Quota Limit. 10s wait... ({attempt+1}/3)")
-                time.sleep(10)
+                print(f"⏳ 429 Quota Limit. 10초 대기 후 재시도... ({attempt+1}/3)")
+                time.sleep(10) # Flash는 10초만 쉬어도 충분함
                 continue
+            
             else:
-                print(f"❌ API Error {response.status_code}")
+                print(f"❌ API Error {response.status_code}: {response.text[:100]}")
                 return None
+
         except Exception as e:
             print(f"❌ Connection Error: {e}")
             time.sleep(5)
             continue
+            
     return None
 
 # ==========================================
-# 2. 뉴스 분석 실행
+# 2. 뉴스 분석 (배치 처리)
 # ==========================================
 def analyze_news_batch(articles):
     results = []
-    batch_size = 5 # 배치 사이즈
+    # 한 번에 5개씩 처리
+    batch_size = 5
     
-    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Total: {len(articles)} articles)...")
+    print(f"🔄 [Run #{RUN_NUMBER}] 분석 시작 (Model: gemini-1.5-flash)...")
 
-    # 최신 뉴스 25개만 집중 분석
-    target_articles = articles[:25]
+    # 전체 뉴스 중 최대 20개까지만 분석 (Quota 안전 장치)
+    target_articles = articles[:20]
 
     for i in range(0, len(target_articles), batch_size):
         batch = target_articles[i:i + batch_size]
         print(f"   Processing batch {i//batch_size + 1}...")
         
         prompt = f"""
-        Role: Senior Financial Analyst for Korean Stock Market (KOSPI/KOSDAQ).
-        Task: Analyze these global news items and predict impact on Korean stocks.
+        You are a financial analyst. Analyze these news articles.
+        Return a JSON LIST of objects.
         
-        Input News:
+        [Articles]:
         {json.dumps(batch, ensure_ascii=False)}
-        
-        Requirements:
-        1. Identify related Korean stocks (e.g., Samsung Electronics, SK Hynix, LG Energy Solution).
-        2. Assign an 'impact score' (0.0 - 10.0). High score for earnings surprises or direct supply chain news.
-        3. Write a sharp, 1-sentence summary in Korean.
-        
-        Output JSON Format:
-        [
-            {{
-                "title": "Korean Title",
-                "summary": "Korean Summary",
-                "score": 9.5,
-                "related_stocks": ["StockName1", "StockName2"]
-            }}
-        ]
+
+        [Fields Required]:
+        - title (Korean summary title)
+        - summary (Korean 1 sentence)
+        - score (Float 0.0-10.0 impact score)
+        - related_stocks (List of strings)
         """
 
-        cleaned_text = call_gemini_flash(prompt)
+        response_text = call_gemini_flash(prompt)
         
-        if cleaned_text:
+        if response_text:
             try:
-                data = json.loads(cleaned_text)
+                data = json.loads(response_text)
                 if isinstance(data, list): results.extend(data)
-                elif isinstance(data, dict) and 'articles' in data: results.extend(data['articles'])
-                print(f"      ✅ Batch {i//batch_size + 1} success: {len(data)} items analyzed.")
-            except json.JSONDecodeError as e:
-                print(f"⚠️ JSON Parsing Failed in batch {i}: {e}")
-                # 디버깅용: 실패한 텍스트 일부 출력
-                print(f"   [Debug] Failed Text Start: {cleaned_text[:50]}...")
-        else:
-            print("   ⚠️ No response from AI")
+                elif isinstance(data, dict): 
+                    if 'articles' in data: results.extend(data['articles'])
+                    else: results.append(data)
+            except: pass
         
-        time.sleep(4) # Flash 모델 쿨다운
+        # 🔥 Flash 모델의 제한(1분 15회)을 지키기 위해 5초 휴식
+        print("   ☕ Cooling down 5s...")
+        time.sleep(5)
 
     return results
 
 # ==========================================
-# 3. 저장 및 알림
+# 3. 저장 및 전송
 # ==========================================
 def save_and_notify(data):
-    # 파일 저장
+    # 결과 파일 저장
     output_data = {
         "analyzed_at": str(datetime.now()),
         "run_number": RUN_NUMBER,
@@ -161,47 +136,43 @@ def save_and_notify(data):
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(output_data, f, ensure_ascii=False, indent=4)
     
-    print(f"✅ 분석 완료! 총 {len(data)}건 저장.")
+    print(f"✅ 분석 완료! 총 {len(data)}건 저장됨.")
 
     if not TELEGRAM_BOT_TOKEN: return
 
-    # 점수 필터링 및 정렬
-    important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
-    important_news.sort(key=lambda x: x.get('score', 0), reverse=True)
-    top_news = important_news[:7] # 상위 7개 전송
-
-    if not top_news:
-        send_telegram_msg(f"📉 [GlobalStockNow #{RUN_NUMBER}] 분석 완료: 중요 뉴스 없음 (기준 {IMPACT_THRESHOLD}점 미달)")
+    if not data:
+        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 분석 실패: 결과 데이터 없음")
         return
 
-    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n\n"
-    for item in top_news:
-        score = item.get('score', 0)
-        # 아이콘 설정
-        if score >= 8.5: icon = "🚨(강력매수)"
-        elif score >= 7.0: icon = "🔥(호재)"
-        else: icon = "⚡(관심)"
-        
-        msg += f"{icon} **{item.get('title')}** ({score}점)\n"
-        msg += f"└ {item.get('summary')}\n"
-        msg += f"└ 관련주: `{', '.join(item.get('related_stocks', []))}`\n\n"
+    # 중요 뉴스 필터링 (점수순 정렬)
+    important_news = [r for r in data if float(r.get('score', 0)) >= IMPACT_THRESHOLD]
+    important_news.sort(key=lambda x: x.get('score', 0), reverse=True)
+    top_news = important_news[:5]
+
+    msg = f"🚀 **[GlobalStockNow 속보 (#{RUN_NUMBER})]**\n(모델: Gemini 1.5 Flash)\n\n"
+    
+    if not top_news:
+        msg += "특이사항 없음 (중요 뉴스 없음)"
+    else:
+        for item in top_news:
+            score = item.get('score', 0)
+            icon = "🔥" if score >= 7.0 else "⚡"
+            msg += f"{icon} **{item.get('title')}** ({score}점)\n"
+            msg += f"└ {item.get('summary')}\n"
+            msg += f"└ 관련주: {', '.join(item.get('related_stocks', []))}\n\n"
     
     send_telegram_msg(msg)
 
 if __name__ == "__main__":
     if os.path.exists(INPUT_FILE):
         with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            try:
-                raw_data = json.load(f)
-                articles = raw_data.get('articles', [])
-            except:
-                articles = []
-        
+            raw_data = json.load(f)
+            articles = raw_data.get('articles', [])
+            
         if articles:
             results = analyze_news_batch(articles)
             save_and_notify(results)
         else:
             print("📭 뉴스 데이터 없음")
-            send_telegram_msg(f"⚠️ [GlobalStockNow #{RUN_NUMBER}] 수집된 뉴스가 0건입니다.")
     else:
         print(f"❌ {INPUT_FILE} 파일 없음")
