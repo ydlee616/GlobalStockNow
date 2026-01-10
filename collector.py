@@ -1,21 +1,21 @@
-"""Module: collector.py | Version: 0.2.0 | Engineer: Guido Style"""
+"""Module: collector.py | Version: 0.2.1 | Engineer: Guido Style"""
 import feedparser, json, os, urllib.parse
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 
-# [전략 키워드] 엔비디아 및 기술 세부 사양까지 포착하도록 키워드 최적화
-KEYWORDS = 'Nvidia OR "G-Sync" OR "Pulsar" OR "Meta Nuclear" OR "AI Power" OR "HBM3E" OR "K-Defense"'
+# [전략 키워드] 메타 원전, 엔비디아 신기술, HBM, 전력 인프라 집중 수집
+KEYWORDS = 'Nvidia Pulsar OR "G-Sync" OR "Meta Nuclear" OR "AI Power" OR "HBM3E" OR "Nuclear Energy Deal"'
 Q = urllib.parse.quote(KEYWORDS)
 FEEDS = {"GNews": f"https://news.google.com/rss/search?q={Q}&hl=en-US&gl=US&ceid=US:en"}
 
 def collect():
-    print("🌐 [Ver 0.2.0] 글로벌 테크/안보 밸류체인 데이터 수집...")
+    print("🌐 [Ver 0.2.1] 48h 글로벌 금융-기술 밸류체인 데이터 수집...")
     all_articles = []
     limit = datetime.now(timezone.utc) - timedelta(hours=48)
 
     for name, url in FEEDS.items():
         feed = feedparser.parse(url)
-        for entry in feed.entries[:25]:
+        for entry in feed.entries[:30]: # 수집량을 늘려 더 많은 후보군 확보
             try:
                 pub_date = parser.parse(entry.get('published', ''))
                 if pub_date.tzinfo is None: pub_date = pub_date.replace(tzinfo=timezone.utc)
