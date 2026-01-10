@@ -3,10 +3,8 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: write # [필수] 권한 설정 보강
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -14,17 +12,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Git Push 충돌 방지 핵심 설정
-
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # 전체 히스토리 로드하여 충돌 방지
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-
-      - name: Run Strategic Analyzer (Ver 0.5.1)
+      - name: Run Pipeline (Ver 0.6.0)
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -33,12 +29,11 @@ jobs:
         run: |
           python collector.py
           python analyzer.py
-
-      - name: Sync and Push
+      - name: Finalize and Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add breaking_news.json analyzed_news.json
-          git commit -m "Ver 0.5.1 Historical Analysis Deployment (Run #${{ github.run_number }})" || exit 0
-          git pull --rebase origin main
+          git commit -m "Ver 0.6.0 Stability Patch (#${{ github.run_number }})" || exit 0
+          git pull --rebase origin main # 서버와 강제 동기화
           git push origin main
