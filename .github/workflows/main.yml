@@ -5,8 +5,8 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 
-permissions: # [중요] 쓰기 권한 명시하여 128 에러 해결
-  contents: write
+permissions:
+  contents: write # [핵심] 파일 쓰기 권한을 명시적으로 부여
 
 jobs:
   run-pipeline:
@@ -28,7 +28,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: python collector.py
 
-      - name: Run Strategic Analyzer (Ver 0.4.0)
+      - name: Run Strategic Analyzer (Ver 0.4.1)
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -36,11 +36,11 @@ jobs:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: python analyzer.py
 
-      - name: Commit and Push (Ver 1.0.4)
+      - name: Commit and Push (Ver 1.0.5)
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add breaking_news.json analyzed_news.json
-          git commit -m "Ver 0.4.0 Deployment (Run #${{ github.run_number }})" || exit 0
+          git commit -m "Ver 0.4.1 Final Fix (Run #${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
