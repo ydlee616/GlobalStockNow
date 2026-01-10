@@ -8,7 +8,7 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20 # [개조] 딥 서칭을 위해 충분한 시간 확보
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,20 +21,22 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-      - name: Run GlobalStockNow Engine
+      - name: Run Web-Deep Intelligence Engine
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
+          echo "🚀 탐색 엔진 가동..."
           python collector.py
+          echo "🧠 전략 분석 개시..."
           python analyzer.py
-      - name: Force Sync and Clean Push
+      - name: Clean Sync and Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add analyzer.py collector.py .gitignore
-          git commit -m "Ver 1.1.5 Alpha Extraction (#${{ github.run_number }})" || exit 0
+          git commit -m "Ver 1.2.0 Web-Deep Search Intelligence (#${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
