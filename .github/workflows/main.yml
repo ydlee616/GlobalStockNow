@@ -4,11 +4,11 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 permissions:
-  contents: write # 저장소 쓰기 권한 강제
+  contents: write
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # 10분 이상 정체 시 자동 종료로 자원 낭비 방지
+    timeout-minutes: 10 # 좀비 프로세스 방지
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-      - name: Run GlobalStockNow Engine
+      - name: Run GlobalStockNow Engine (Ver 1.0.4)
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -35,6 +35,6 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add .
-          git commit -m "Ver 1.0.2 Gold Master Deployment (#${{ github.run_number }})" || exit 0
+          git commit -m "Ver 1.0.4 Gold Master Deployment (#${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
