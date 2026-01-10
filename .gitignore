@@ -1,0 +1,15 @@
+# ==========================================
+# GlobalStockNow Clean Filter
+# ==========================================
+
+# Data files (원재료 및 분석 결과 제외)
+breaking_news.json
+analyzed_news.json
+
+# Python system files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables (보안을 위해 로컬 설정 제외)
+.env
