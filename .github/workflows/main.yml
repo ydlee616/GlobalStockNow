@@ -8,7 +8,7 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +35,6 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add analyzer.py collector.py .gitignore
-          git commit -m "Ver 1.1.1 Intelligence Hardening (#${{ github.run_number }})" || exit 0
+          git commit -m "Ver 1.1.5 Alpha Extraction (#${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
