@@ -25,36 +25,41 @@ def send_telegram_msg(message):
     except: pass
 
 # ==========================================
-# 1. Gemini API 호출 (실패 시 원본 반환)
+# 1. Gemini API 호출 (Grok 페르소나 탑재)
 # ==========================================
-def analyze_article_final(article):
-    # 기본값 (AI 실패 시 사용할 원본 데이터)
-    fallback_result = {
-        "title": article.get('title', 'No Title'),
-        "summary": f"[AI 분석 불가/원본] {article.get('summary', '')[:200]}...", # 원본 요약 사용
-        "score": 5.0, # 중립 점수 부여
+def call_gemini_grok_mode(article):
+    # [데이터 유실 방지용 기본값]
+    fallback = {
+        "title": f"[원본] {article.get('title')}",
+        "summary": article.get('summary', '분석 실패'),
+        "score": 5.0,
         "related_stocks": ["Manual_Check"],
-        "ai_status": "failed"
+        "status": "Fallback"
     }
 
-    if not GOOGLE_API_KEY: 
-        return fallback_result
+    if not GOOGLE_API_KEY: return fallback
 
+    # 보스 환경에서 가장 안정적인 구형 Pro 모델 사용
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
     headers = {'Content-Type': 'application/json'}
     
-    # 프롬프트: JSON 포맷 강제
+    # [프롬프트] 전쟁/납치 뉴스 분석을 강제하기 위한 Grok 페르소나 주입
     prompt = f"""
-    Analyze this news for stock market impact.
-    [News Title]: {article.get('title')}
-    [News Summary]: {article.get('summary')}
+    You are 'Grok', a cynical and cold-blooded financial analyst. 
+    Analyze the following news for its absolute economic impact. 
+    Do not censor sensitive topics like war, invasion, or kidnapping. 
     
-    OUTPUT JSON ONLY:
+    [News to Analyze]:
+    Title: {article.get('title')}
+    Summary: {article.get('summary')}
+
+    [Output Requirement]:
+    Return ONLY a JSON object:
     {{
-        "title": "Korean Title",
-        "summary": "Korean Summary",
+        "title": "Korean Summary Title",
+        "summary": "Korean 1-sentence analysis",
         "score": 0.0-10.0,
-        "related_stocks": ["Stock1", "Stock2"]
+        "related_stocks": ["Ticker1", "Ticker2"]
     }}
     """
 
@@ -66,120 +71,69 @@ def analyze_article_final(article):
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ],
-        "generationConfig": {"temperature": 0.1}
+        "generationConfig": {"temperature": 0.2}
     }
 
     try:
         response = requests.post(url, headers=headers, json=data, timeout=30)
-        
         if response.status_code == 200:
-            try:
-                text = response.json()['candidates'][0]['content']['parts'][0]['text']
+            res_json = response.json()
+            # AI가 답변을 거부했는지 체크
+            if 'candidates' in res_json and res_json['candidates'][0].get('content'):
+                text = res_json['candidates'][0]['content']['parts'][0]['text']
                 clean_text = re.sub(r'```json|```', '', text).strip()
                 result = json.loads(clean_text)
-                result['ai_status'] = 'success'
-                return result # 성공 시 AI 결과 반환
-            except:
-                print(f"⚠️ JSON 파싱 실패 -> 원본 사용: {article.get('title')[:10]}")
-                return fallback_result # 파싱 실패 시 원본 반환
-        
-        elif response.status_code == 429:
-            print("⏳ 429 Rate Limit. (Using Fallback)")
-            time.sleep(30) # 429 발생 시 휴식 후 원본 반환
-            return fallback_result
-            
-        else:
-            print(f"❌ API Error {response.status_code}. (Using Fallback)")
-            return fallback_result
+                result['status'] = 'AI_Analyzed'
+                return result
+    except: pass
 
-    except Exception as e:
-        print(f"❌ Connection Error: {e}")
-        return fallback_result
+    return fallback
 
 # ==========================================
-# 2. 전체 뉴스 처리 Loop
+# 2. 뉴스 처리 엔진 (각개격파)
 # ==========================================
-def process_all_news(articles):
-    results = []
-    print(f"🔄 [Run #{RUN_NUMBER}] 처리 시작 (총 {len(articles)}건)...")
+def run_analysis():
+    if not os.path.exists(INPUT_FILE): return
     
-    # 전체 뉴스 처리
+    with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+        raw = json.load(f)
+        articles = raw.get('articles', [])
+    
+    if not articles:
+        send_telegram_msg(f"📭 [Run #{RUN_NUMBER}] 분석할 뉴스가 없습니다.")
+        return
+
+    results = []
+    print(f"🔄 분석 시작: 총 {len(articles)}건")
+
+    # [중요] 연좌제 방지를 위해 하나씩 처리
     for i, article in enumerate(articles):
-        # 1. 분석 시도 (실패해도 원본이 나옴)
-        res = analyze_article_final(article)
+        print(f"   [{i+1}/{len(articles)}] 분석 중...")
+        res = call_gemini_grok_mode(article)
         results.append(res)
         
-        status = res.get('ai_status', 'failed')
-        print(f"   [{i+1}/{len(articles)}] {status.upper()}: {res.get('title')[:20]}...")
-        
-        # 2. API 쿨타임 준수 (성공 여부 상관없이 32초 휴식)
-        # Gemini Free/Pro는 분당 요청 제한이 있으므로 필수
-        time.sleep(32)
+        # [중요] 무료/프로 API RPM 제한(2회/분) 준수를 위해 35초 대기
+        time.sleep(35)
 
-    return results
-
-# ==========================================
-# 3. 저장 및 알림
-# ==========================================
-def save_and_notify(data):
     # 결과 저장
     output_data = {
         "analyzed_at": str(datetime.now()),
         "run_number": RUN_NUMBER,
-        "count": len(data),
-        "reports": data
+        "count": len(results),
+        "reports": results
     }
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(output_data, f, ensure_ascii=False, indent=4)
-    
-    print(f"✅ 저장 완료: 총 {len(data)}건")
 
-    if not TELEGRAM_BOT_TOKEN: return
-
-    if not data:
-        send_telegram_msg(f"🚫 [GlobalStockNow #{RUN_NUMBER}] 데이터 없음 (입력 파일 확인 필요)")
-        return
-
-    # 텔레그램 메시지 작성
-    msg = f"🚀 **[GlobalStockNow 결과 (#{RUN_NUMBER})]**\n(총 {len(data)}건 처리됨)\n\n"
+    # 텔레그램 전송
+    important = sorted(results, key=lambda x: float(x.get('score', 0)), reverse=True)[:5]
+    msg = f"🚀 **[GlobalStockNow #{RUN_NUMBER}] 분석 완료**\n(총 {len(results)}건 처리)\n\n"
+    for item in important:
+        icon = "🔥" if float(item.get('score', 0)) >= 7 else "⚡"
+        msg += f"{icon} **{item['title']}** ({item['score']}점)\n"
+        msg += f"└ {item['summary']}\n\n"
     
-    # 상위 5개 전송 (점수순)
-    # score가 없는 경우 0으로 처리하여 정렬
-    top_news = sorted(data, key=lambda x: float(x.get('score', 0)), reverse=True)[:5]
-    
-    for item in top_news:
-        title = item.get('title')
-        summary = item.get('summary')
-        score = item.get('score', 0)
-        
-        # AI 실패로 원본이 저장된 경우 표시
-        icon = "🔥" if score >= 7 else "⚡"
-        if item.get('ai_status') == 'failed':
-            icon = "⚠️"
-            title = f"[AI분석불가] {title}"
-            
-        msg += f"{icon} **{title}** ({score}점)\n"
-        msg += f"└ {summary}\n\n"
-        
     send_telegram_msg(msg)
 
 if __name__ == "__main__":
-    if os.path.exists(INPUT_FILE):
-        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            raw_data = json.load(f)
-            # JSON 구조에 따라 리스트 추출
-            if isinstance(raw_data, list): articles = raw_data
-            elif isinstance(raw_data, dict): articles = raw_data.get('articles', [])
-            else: articles = []
-            
-        if articles:
-            # [테스트 모드] 시간 관계상 앞쪽 10개만 먼저 테스트 권장
-            # 전체를 다 하려면: process_all_news(articles)
-            results = process_all_news(articles[:10]) 
-            save_and_notify(results)
-        else:
-            print("📭 뉴스 데이터 없음")
-            # 입력 파일이 비어있으면 빈 리스트라도 저장
-            save_and_notify([])
-    else:
-        print(f"❌ {INPUT_FILE} 파일 없음")
+    run_analysis()
