@@ -1,42 +1,36 @@
 name: GlobalStockNow AI Pipeline
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *' # [보스 지침] 1시간마다 자동 실행
   workflow_dispatch:
 permissions:
   contents: write
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # [개조] 딥 서칭을 위해 충분한 시간 확보
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-      - name: Run Web-Deep Intelligence Engine
+      - name: Run GlobalStockNow Engine
         env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} # [중요] Groq 키 필요
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          echo "🚀 탐색 엔진 가동..."
           python collector.py
-          echo "🧠 전략 분석 개시..."
           python analyzer.py
       - name: Clean Sync and Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add analyzer.py collector.py .gitignore
-          git commit -m "Ver 1.2.0 Web-Deep Search Intelligence (#${{ github.run_number }})" || exit 0
-          git pull --rebase origin main
+          git commit -m "Ver 1.3.0 Qwen-Neural-Transplant (#${{ github.run_number }})" || exit 0
           git push origin main
