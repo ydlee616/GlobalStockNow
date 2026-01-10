@@ -1,6 +1,7 @@
 google-generativeai>=0.8.3
 duckduckgo-search
 requests
+feedparser
 torch --index-url https://download.pytorch.org/whl/cpu
 transformers
 accelerate
