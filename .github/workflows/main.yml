@@ -4,7 +4,7 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 permissions:
-  contents: write # [핵심] 권한 강제 부여
+  contents: write # [핵심] 권한 문제 해결을 위한 명시적 선언
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -13,14 +13,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+          fetch-depth: 0 # 모든 히스토리를 로드하여 Git Push 충돌 방지
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-      - name: Run GlobalStockNow (Ver 0.6.1)
+      - name: Run Pipeline (Ver 0.6.6)
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -29,11 +29,11 @@ jobs:
         run: |
           python collector.py
           python analyzer.py
-      - name: Force Sync and Push
+      - name: Final Sync and Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add .
-          git commit -m "Ver 0.6.1 Final Stabilization (#${{ github.run_number }})" || exit 0
+          git commit -m "Ver 0.6.6 48h Filter Adjusted (#${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
