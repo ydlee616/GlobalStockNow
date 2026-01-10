@@ -4,11 +4,11 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: write # [핵심] 권한 문제 해결
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # 좀비 프로세스 방지
+    timeout-minutes: 12 # 정체 방지용 타임아웃
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-      - name: Run GlobalStockNow Engine (Ver 1.0.4)
+      - name: Run GlobalStockNow Engine
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -30,11 +30,12 @@ jobs:
         run: |
           python collector.py
           python analyzer.py
-      - name: Force Sync and Push
+      - name: Force Sync and Clean Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add .
-          git commit -m "Ver 1.0.4 Gold Master Deployment (#${{ github.run_number }})" || exit 0
+          # [핵심] 소스 코드의 무결성만 유지하고 데이터 파일은 제외
+          git add analyzer.py collector.py .gitignore
+          git commit -m "Gold Master Ver 1.0.7 Deployment (#${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
