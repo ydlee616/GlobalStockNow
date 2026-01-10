@@ -1,14 +1,14 @@
-"""Module: collector.py | Version: 0.1.6 | Description: 48h Shift-Left Filter."""
+"""Module: collector.py | Version: 0.1.7 | Engineer: Guido Style"""
 import feedparser, json, os, urllib.parse
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 
-# [보스 지침] 글로벌 거시경제 및 안보 키워드 확장
+# 시장 주도 섹터 키워드
 Q = urllib.parse.quote('Nvidia OR "Semi-conductor" OR "Nuclear Power" OR "Meta" OR "North Korea" OR "Interest Rate"')
 FEEDS = {"GNews": f"https://news.google.com/rss/search?q={Q}&hl=en-US&gl=US&ceid=US:en"}
 
 def collect():
-    print("🌐 [Ver 0.1.6] 48시간 이내 글로벌 속보 선별 수집 시작...")
+    print("🌐 [Ver 0.1.7] 48시간 이내 글로벌 속보 선별 수집...")
     all_articles = []
     limit = datetime.now(timezone.utc) - timedelta(hours=48)
 
@@ -18,9 +18,7 @@ def collect():
             try:
                 pub_date = parser.parse(entry.get('published', ''))
                 if pub_date.tzinfo is None: pub_date = pub_date.replace(tzinfo=timezone.utc)
-                
-                # 48시간 이내 기사만 통과
-                if pub_date >= limit:
+                if pub_date >= limit: # 48시간 필터 적용
                     all_articles.append({
                         "source": name, "title": entry.get('title', ''),
                         "link": entry.get('link', ''), "published_at": entry.get('published', ''),
