@@ -4,7 +4,7 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 
-permissions: # [최종 해결책] 저장소 쓰기 권한을 코드 레벨에서 강제 부여
+permissions:
   contents: write
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 모든 히스토리를 가져와 push 충돌 방지
+          fetch-depth: 0 # Git Push 충돌 방지 핵심 설정
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -24,22 +24,21 @@ jobs:
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
 
-      - name: Run Collector
-        run: python collector.py
-
-      - name: Run Strategic Analyzer (Ver 0.5.0)
+      - name: Run Strategic Analyzer (Ver 0.5.1)
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
-        run: python analyzer.py
+        run: |
+          python collector.py
+          python analyzer.py
 
-      - name: Sync and Force Push
+      - name: Sync and Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add breaking_news.json analyzed_news.json
-          git commit -m "Ver 0.5.0 Stability Update (Run #${{ github.run_number }})" || exit 0
+          git commit -m "Ver 0.5.1 Historical Analysis Deployment (Run #${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
