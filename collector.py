@@ -4,7 +4,7 @@ Module: collector.py | Version: 0.1.3 | Updated: 2026-01-10
 import feedparser, json, os, urllib.parse
 from datetime import datetime
 
-# 전략 키워드 (방산, 빅테크, 에너지, 지정학 리스크)
+# 보스 전용 전략 쿼리
 Q_DEF = urllib.parse.quote('KF-21 OR "Nuclear Submarine" OR "K-Defense" OR "North Korea"')
 Q_TEC = urllib.parse.quote('Apple OR Meta OR "Smart Glasses" OR "AR Glasses" OR "AI Data Center"')
 Q_ENE = urllib.parse.quote('"Nuclear Power" OR SMR OR "Solar Power"')
@@ -22,14 +22,13 @@ RSS_FEEDS = {
 }
 
 def collect():
-    print(f"🌐 [Ver 0.1.3] 글로벌 수집 시작...")
+    print(f"🌐 [Ver 0.1.3] 전략 수집 엔진 가동...")
     all_articles = []
     for name, url in RSS_FEEDS.items():
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries[:10]:
                 link = entry.get('link', '')
-                # 국내 매체 배제
                 if any(dom in link.lower() for dom in ['yna.co.kr', 'chosun.com', 'hankyung.com']): continue
                 all_articles.append({
                     "source": name, "title": entry.get('title', ''), "link": link,
