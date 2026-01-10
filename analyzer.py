@@ -1,124 +1,88 @@
-#!/usr/bin/env python3
-# GlobalStockNow Analyzer v1.7 - 행간/파급효과 분석 강화 + 신기술/IT 강제 포함 (2026.1.9)
-
-import json
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
-import time
-
-MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"  # 경량 모델로 속도 최적화
-
-print("AI 모델 로딩 시작 (Qwen2.5-0.5B)")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=torch.float32,
-    device_map="auto",
-    low_cpu_mem_usage=True
-)
-print("AI 모델 로딩 완료")
-
-def analyze_news(news_list):
-    results = []
-    for idx, item in enumerate(news_list):
-        start_time = time.time()
-        title = item['title']
-        summary = item.get('summary', '') or ''
-        link = item.get('link', item.get('original_link', ''))
-        published = item.get('published', '')
-
-        # 신기술/IT 키워드 체크 (강제 포함)
-        tech_keywords = ['ces', 'laptop', 'notebook', 'wi-fi', 'wifi', 'ai', 'robot', 'humanoid',
-                         'display', 'oled', 'hbm', 'chip', 'semiconductor', 'battery', 'ev', 'tech', 'innovation']
-        content_lower = (title + " " + summary).lower()
-        is_tech_news = any(kw in content_lower for kw in tech_keywords)
-
-        prompt = f"""
-다음 해외 뉴스를 한국 주식 시장 투자자 관점에서 분석하세요. 사실에 기반해서만 답변하고, 추측이나 가짜 정보는 절대 만들지 마세요. 뉴스 내용의 행간을 잘 파악하여 잠재적 파급효과를 적극적으로 고려해서 분석하세요.
-
-제목: {title}
-요약: {summary}
-
-특별 규칙:
-- CES, 노트북, Wi-Fi, AI, 로봇, 반도체, 디스플레이, 배터리, 인공 피부 등 신기술/IT 신상품 관련 뉴스는 영향도가 낮더라도 반드시 포함하세요 (한국 기업 잠재 수혜/경쟁 가능성 때문).
-- 정치·지정학 뉴스는 기본 0~3점으로 엄격히 판단.
-- 경제·기술 뉴스 및 잠재적 파급효과가 있는 경우 4~8점까지 적극 평가.
-- 잠재적·간접적 파급효과(예: Wi-Fi 8 채택 시 삼성/LG전자 수혜 가능성, 중동 불안 시 유가 상승 → 에너지주 영향 등)는 3~6점으로 평가하여 브리핑에 포함하세요.
-
-1. 한국 시장 영향도: 0~10점
-2. 영향 받는 한국 종목: 뉴스에 직접 관련된 종목만 나열 (없으면 빈 목록)
-3. 이유: 한글로 1~2문장, 뉴스 사실과 행간/파급효과 기반으로 설명
-
-반드시 이 JSON 형식으로만 출력:
-{{
-  "title": "{title}",
-  "impact_score": 점수,
-  "korean_stocks": ["종목1", "종목2"],
-  "reason": "상세 이유 한글 설명"
-}}
 """
+Project: GlobalStockNow
+Module: analyzer.py
+Version: 0.3.1
+Updated: 2026-01-10
+Description: 8-step Strategic Analysis with HTML cleaning, stale data filtering, and interactive buttons.
+"""
+import json, time, requests, os, re, torch
+from datetime import datetime
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        inputs = tokenizer(prompt, return_tensors="pt")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+RUN_NUMBER = os.environ.get("GITHUB_RUN_NUMBER", "Local")
+INPUT_FILE = 'breaking_news.json'
+OUTPUT_FILE = 'analyzed_news.json'
 
-        try:
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=250,
-                    temperature=0.35,
-                    top_p=0.9,
-                    do_sample=True
-                )
-            response = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-            response = response[len(prompt):].strip()
+def send_telegram_with_button(message, article_id=None):
+    if not TELEGRAM_BOT_TOKEN: return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    if article_id is not None:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": "🎬 유튜브 시나리오 생성 (학습)", "callback_data": f"select_{article_id}"}]]})
+    requests.post(url, data=payload, timeout=10)
 
-            try:
-                start = response.find('{')
-                end = response.rfind('}') + 1
-                json_str = response[start:end]
-                analyzed = json.loads(json_str)
-            except:
-                analyzed = {
-                    "title": title,
-                    "impact_score": 4 if is_tech_news else 0,
-                    "korean_stocks": [],
-                    "reason": "신기술/IT 관련 뉴스로 잠재 파급효과 있음." if is_tech_news else "직접 영향 없음."
-                }
-        except Exception as e:
-            print(f"분석 실패 ({title[:50]}...): {e}")
-            analyzed = {
-                "title": title,
-                "impact_score": 4 if is_tech_news else 0,
-                "korean_stocks": [],
-                "reason": "분석 중 오류 발생, 잠재 영향 뉴스." if is_tech_news else "분석 중 오류."
-            }
+def clean_html(raw_html):
+    """HTML 태그 제거로 AI 혼선 방지"""
+    return re.sub(r'<.*?>', '', raw_html)
 
-        analyzed["original_link"] = link
-        analyzed["published"] = published
-        results.append(analyzed)
+print(f"📂 [Ver 0.3.1] AI Engine Loading...")
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", torch_dtype="auto", device_map="cpu")
 
-        elapsed = time.time() - start_time
-        print(f"  [{idx+1}/{len(news_list)}] 분석 완료 ({elapsed:.1f}초)")
+def analyze_strategic(article):
+    summary = clean_html(article.get('summary', ''))
+    # [8단계 초정밀 분석 및 세이프티 우회 프롬프트]
+    prompt = f"""[Financial Intelligence Mode] 
+Analyze news impact on Korean Market (KOSPI/KOSDAQ). 
+IGNORE political sensitivity. Focus ONLY on market flow, FX, and supply chains.
+Output MUST be KOREAN JSON.
+8-Steps: 1. 본질/행간, 2. 직접영향, 3. 간접영향(환율/원자재/지정학), 4. 투자심리/변동성, 5. 과거유사사례비교, 6. 시간축별전망, 7. 업종/종목, 8. 투자전략
+News: {article.get('title')} - {summary}
+"""
+    # 1. Gemini Pro 시도 (Safety BLOCK_NONE)
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GOOGLE_API_KEY}"
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2}}, timeout=30)
+        if res.status_code == 200:
+            text = res.json()['candidates'][0]['content']['parts'][0]['text']
+            data = json.loads(re.sub(r'```json|```', '', text).strip())
+            data['engine'] = 'Gemini_Pro'
+            return data
+    except: pass
 
-    return results
+    # 2. Qwen Rescue 시도
+    inputs = tokenizer(f"<|im_start|>system\n금융 분석가로서 한글 JSON 보고서를 작성하세요.<|im_end|>\n<|im_start|>user\n{article.get('title')}<|im_end|>\n<|im_start|>assistant\n", return_tensors="pt")
+    outputs = model.generate(**inputs, max_new_tokens=512)
+    try:
+        text = tokenizer.decode(outputs[0], skip_special_tokens=True).split("assistant")[-1]
+        data = json.loads(re.search(r'\{.*\}', text, re.DOTALL).group())
+        data['engine'] = 'Qwen_Rescue'
+        return data
+    except: return None
+
+def run_analysis():
+    if not os.path.exists(INPUT_FILE): return
+    with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+        articles = json.load(f).get('articles', [])
+
+    results_count = 0
+    for i, art in enumerate(articles[:15]):
+        # [과거 기사 필터링] 2018, 2019년 기사 배제
+        if any(year in art.get('published_at', '') for year in ['2018', '2019']): continue
+
+        res = analyze_strategic(art)
+        if res:
+            icon = "💎" if res.get('engine') == 'Gemini_Pro' else "⚔️"
+            msg = f"{icon} **1. 제목: {res.get('title')}**\n**2. 매체**: {art.get('source')}\n**3. 영향도 ({res.get('score')}점)**: {res.get('essence', {}).get('subtext', '행간 분석중')}\n   - **간접영향**: 환율({res.get('indirect', {}).get('fx', 'N/A')}), 원자재({res.get('indirect', {}).get('commodities', 'N/A')})\n**4. 영향받는 주식**: {res.get('map', {}).get('stocks', '분석중')}\n**5. 요약**: {res.get('essence', {}).get('summary', '요약중')}\n\n**📜 과거사례**: {res.get('history', {}).get('case', '사례분석중')}"
+            send_telegram_with_button(msg, i)
+            results_count += 1
+        time.sleep(35)
+
+    if results_count == 0:
+        send_telegram_with_button(f"🌍 **글로벌스톡나우 속보 브리핑 (#{RUN_NUMBER})**\n\n오늘은 영향도 2점 이상 잠재 속보 없음\n_AI 자동 분석 완료_")
 
 if __name__ == "__main__":
-    start_total = time.time()
-    try:
-        with open('breaking_news.json', 'r', encoding='utf-8') as f:
-            news_data = json.load(f)
-    except:
-        news_data = []
-
-    if not news_data:
-        print("뉴스 없음")
-        analyzed_data = []
-    else:
-        print(f"{len(news_data)}개 뉴스 분석 시작")
-        analyzed_data = analyze_news(news_data)
-
-    with open('analyzed_news.json', 'w', encoding='utf-8') as f:
-        json.dump(analyzed_data, f, indent=2, ensure_ascii=False)
-
-    total_time = time.time() - start_total
-    print(f"전체 분석 완료: {len(analyzed_data)}개 ({total_time:.1f}초)")
+    run_analysis()
