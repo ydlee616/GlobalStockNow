@@ -4,11 +4,11 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 permissions:
-  contents: write # [핵심] 권한 문제 해결
+  contents: write
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 12 # 정체 방지용 타임아웃
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,8 +34,7 @@ jobs:
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          # [핵심] 소스 코드의 무결성만 유지하고 데이터 파일은 제외
           git add analyzer.py collector.py .gitignore
-          git commit -m "Gold Master Ver 1.0.7 Deployment (#${{ github.run_number }})" || exit 0
+          git commit -m "Ver 1.1.1 Intelligence Hardening (#${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
