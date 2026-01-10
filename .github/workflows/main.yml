@@ -3,8 +3,8 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-permissions: # [확정] 이미지 #8c2f84.png 설정과 별개로 YAML에서도 쓰기 권한 강제
-  contents: write
+permissions:
+  contents: write # [확정] 저장소 쓰기 권한 강제 부여
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -16,21 +16,21 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install dependencies
-        run: pip install feedparser requests python-dateutil # [필수] 날짜 처리용 추가
+        run: pip install feedparser requests python-dateutil
       - name: Run Collector
         run: python collector.py
-      - name: Run Analyzer (Ver 0.4.7)
+      - name: Run Strategic Analyzer (Ver 0.4.9)
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: python analyzer.py
-      - name: Force Sync and Push
+      - name: Commit and Push
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add breaking_news.json analyzed_news.json
-          git commit -m "Ver 0.4.7 Hardened Sync (Run #${{ github.run_number }})" || exit 0
-          git pull --rebase origin main # 서버와 로컬 동기화 강제 수행
+          git commit -m "Ver 0.4.9 Deployment (Run #${{ github.run_number }})" || exit 0
+          git pull --rebase origin main
           git push origin main
