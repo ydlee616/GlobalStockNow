@@ -4,7 +4,7 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 permissions:
-  contents: write # [확정] 저장소 쓰기 권한 강제 부여
+  contents: write
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -17,7 +17,7 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install feedparser requests python-dateutil
-      - name: Run Collector
+      - name: Run News Collector (Ver 0.1.4)
         run: python collector.py
       - name: Run Strategic Analyzer (Ver 0.4.9)
         env:
@@ -26,11 +26,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: python analyzer.py
-      - name: Commit and Push
+      - name: Commit and Push (Ver 1.1.1)
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add breaking_news.json analyzed_news.json
-          git commit -m "Ver 0.4.9 Deployment (Run #${{ github.run_number }})" || exit 0
+          git commit -m "Ver 0.4.9 Stability Update (Run #${{ github.run_number }})" || exit 0
           git pull --rebase origin main
           git push origin main
